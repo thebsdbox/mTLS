@@ -21,6 +21,8 @@ sudo ./proxy
             CNI Magic 🧙🏻‍♂️
 ```
 
+## Modified Architecture
+
 ```
 ┌─────────────────────────────────┐                     ┌─────────────────────────────────┐
 │Pod-01                           │                     │                           Pod-02│
@@ -38,15 +40,14 @@ sudo ./proxy
             Uses original destination with a modified port                                 
 ```
 
+The steps:
 
-
-`client 0.0.0.0:30000 -> 151.101.129.140:80`
-`client 0.0.0.0:30000 -> 127.0.0.1:18000`
-`Get original destination address/port from socket`
-`Change dest port to 18001`
-`0.0.0.0:30001 -> 151.101.129.140:18001`
-`send original port`
-`151.101.129.140:30002 -> 151.101.129.140:80`
-`TLS between 0.0.0.0:30001 -> 151.101.129.140:18001`
+- Application on pod-01 does `connect()` to pod-02 (port80) `0.0.0.0:30000 -> 10.0.2.2:80`
+- 🐝 modifies the socket`client 0.0.0.0:30000 -> 127.0.0.1:18000`
+- Connection arrives `accept()` from `0.0.0.0:30000`, we get original destination address/port from socket
+- We do a `connect()` to destination:18001 so (`10.0.2.2:18001`)
+- We send the original port (80) as the first bit of data from pod-01 to pod-02 on port 18001
+- Pod-02 creates an internal connection to `10.0.2.2:80`
+- TLS the data between and YoLo
 
 You can then inspect eBPF logs using `sudo cat /sys/kernel/debug/tracing/trace_pipe` to verify transparent proxy indeed intercepts the network traffic.
