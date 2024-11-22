@@ -21,8 +21,8 @@ spec:
       volumeMounts:
         - mountPath: /sys/kernel/debug
           name: sys-kernel-debug
-        - name: cgroup
-          mountPath: /hostfs/sys/fs/cgroup
+        # - name: cgroup
+        #   mountPath: /hostfs/sys/fs/cgroup
   volumes:
     - name: sys-kernel-debug
       hostPath:
@@ -51,6 +51,7 @@ spec:
       securityContext:
         privileged:
           true
+          #capabilities:
           #add: ["IPC_LOCK", "SYS_ADMIN", "SYS_RESOURCE", "BPF"]
       env:
         - name: MY_NODE_NAME
@@ -60,8 +61,8 @@ spec:
       volumeMounts:
         - mountPath: /sys/kernel/debug
           name: sys-kernel-debug
-        - name: cgroup
-          mountPath: /hostfs/sys/fs/cgroup
+      #  - name: cgroup
+      #    mountPath: /hostfs/sys/fs/cgroup
   volumes:
     - name: sys-kernel-debug
       hostPath:

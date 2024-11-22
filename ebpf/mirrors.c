@@ -1,12 +1,11 @@
-
-#include <bpf/bpf_endian.h>
-#include <linux/bpf.h>
-#include <linux/in.h>
-#include <linux/netfilter_ipv4.h>
-#include <stddef.h>
-#include <sys/socket.h>
+// #include <linux/bpf.h>
+// #include <linux/in.h>
+// #include <linux/netfilter_ipv4.h>
+// #include <stddef.h>
+// #include <sys/socket.h>
 
 #include "mirrors.h"
+#include "vmlinux.h"
 
 // This hook is triggered when a process (inside the cgroup where this is
 // attached) calls the connect() syscall It redirect the connection to the
@@ -41,7 +40,7 @@ int cg_connect4(struct bpf_sock_addr *ctx) {
   if ((bpf_htonl(ctx->user_ip4) & mask) != conf->network) {
     return 1;
   }
-  bpf_printk("IP in bounds %pI4 %pI4 %pI4", &destination, &start, &end);
+  // bpf_printk("IP in bounds %pI4 %pI4 %pI4", &destination, &start, &end);
 
   // bpf_printk("IP out of bounds %u %u %u", destination, start, end);
   // bpf_printk("IP out of bounds %pI4 %pI4 %pI4", &destination, &start, &end);
@@ -54,14 +53,28 @@ int cg_connect4(struct bpf_sock_addr *ctx) {
 
   // This field contains the port number passed to the connect() syscall
   __u16 dst_port = bpf_ntohl(ctx->user_port) >> 16;
-  __u64 pid = (bpf_get_current_pid_tgid() >> 32);
+  //__u64 pid = (bpf_get_current_pid_tgid() >> 32);
 
   // This prevents the proxy from proxying itself
+  // pid_t pid2 = get_ns_pid();
 
-  bpf_printk("[%d vs %d] incoming %pI4:%d", pid, conf->proxy_pid, &destination,
-             dst_port);
-  if (pid == conf->proxy_pid)
+  struct task_struct *task = (struct task_struct *)bpf_get_current_task();
+
+  int ns_pid = 0;
+  int ns_ppid = 0;
+  __u32 pid_ns_id = 0;
+
+  ns_pid_ppid(task, &ns_pid, &ns_ppid, &pid_ns_id);
+  bpf_printk("[%d vs %d] incoming %pI4:%d", conf->proxy_pid, ns_pid,
+             &destination, dst_port);
+
+  if (ns_pid == conf->proxy_pid)
     return 1;
+
+  if (dst_port == 8080 || dst_port == 8181) {
+    // kubelet readiness probes (eyeroll)
+    return 1;
+  }
 
   if (dst_port == 18001) {
     bpf_printk("Ignoring cluster to cluster");
@@ -136,7 +149,7 @@ int cg_sock_opt(struct bpf_sockopt *ctx) {
   // proxy server, upon receiving the packets, often needs to know the
   // original destination address in order to handle the traffic
   // appropriately. This is where SO_ORIGINAL_DST comes into play.
-  if (ctx->optname != SO_ORIGINAL_DST)
+  if (ctx->optname != 80)
     return 1;
   // Only forward IPv4 TCP connections
   if (ctx->sk->family != AF_INET)

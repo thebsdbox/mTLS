@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"unsafe"
 
 	"github.com/apparentlymart/go-cidr/cidr"
 	"github.com/cilium/ebpf"
@@ -46,28 +45,10 @@ type SockAddrIn struct {
 	Pad [8]byte
 }
 
-// helper function for getsockopt
-func getsockopt(s int, level int, optname int, optval unsafe.Pointer, optlen *uint32) (err error) {
-	_, _, e := syscall.Syscall6(syscall.SYS_GETSOCKOPT, uintptr(s), uintptr(level), uintptr(optname), uintptr(optval), uintptr(unsafe.Pointer(optlen)), 0)
-	if e != 0 {
-		return e
-	}
-	return
-}
-
-func ToInt(address string) int {
-	ip := net.ParseIP(address)
-	i := int(ip[12]) * 16777216
-	i += int(ip[13]) * 65536
-	i += int(ip[14]) * 256
-	i += int(ip[15])
-	return i
-}
-
 func main() {
 	var c Config
 	flag.StringVar(&c.Address, "address", "127.0.0.1", "Address to bind to, can also be a hostname")
-	flag.StringVar(&c.ClusterAddress, "overrideAddress", "0.0.0.0", "Address to force all traffic to")
+	flag.StringVar(&c.ClusterAddress, "overrideAddress", "", "Address to force all traffic to")
 	flag.StringVar(&c.CgroupOverride, "cgroupPath", "/sys/fs/cgroup", "Path for cgroup")
 	flag.IntVar(&c.ProxyPort, "proxyPort", 18000, "Port for internal proxy")
 	flag.IntVar(&c.ClusterPort, "clusterPort", 18001, "External port for cluster connectivity (TLS)")

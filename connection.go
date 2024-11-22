@@ -7,9 +7,7 @@ import (
 	"log"
 	"net"
 	"os"
-	"syscall"
 	"time"
-	"unsafe"
 )
 
 func (c *Config) startInternalListener() net.Listener {
@@ -43,7 +41,7 @@ func (c *Config) start(listener net.Listener, internal bool) {
 		if internal {
 			log.Printf("internal proxy connection from %s -> %s", conn.RemoteAddr().String(), conn.LocalAddr().String())
 
-			go c.handleInternalConnection(conn)
+			go c.internalProxy(conn)
 		} else {
 			log.Printf("external proxy connection from %s -> %s", conn.RemoteAddr().String(), conn.LocalAddr().String())
 
@@ -51,55 +49,39 @@ func (c *Config) start(listener net.Listener, internal bool) {
 		}
 	}
 }
-func findTargetFromConnection(conn net.Conn) (targetAddr string, targetPort uint16, err error) {
-	// Using RawConn is necessary to perform low-level operations on the underlying socket file descriptor in Go.
-	// This allows us to use getsockopt to retrieve the original destination address set by the SO_ORIGINAL_DST option,
-	// which isn't directly accessible through Go's higher-level networking API.
-	rawConn, err := conn.(*net.TCPConn).SyscallConn()
-	if err != nil {
-		log.Printf("Failed to get raw connection: %v", err)
-		return
-	}
-
-	var originalDst SockAddrIn
-	// If Control is not nil, it is called after creating the network connection but before binding it to the operating system.
-	rawConn.Control(func(fd uintptr) {
-		optlen := uint32(unsafe.Sizeof(originalDst))
-		// Retrieve the original destination address by making a syscall with the SO_ORIGINAL_DST option.
-		err = getsockopt(int(fd), syscall.SOL_IP, SO_ORIGINAL_DST, unsafe.Pointer(&originalDst), &optlen)
-		if err != nil {
-			log.Printf("getsockopt SO_ORIGINAL_DST failed: %v", err)
-			return
-		}
-	})
-
-	targetAddr = net.IPv4(originalDst.SinAddr[0], originalDst.SinAddr[1], originalDst.SinAddr[2], originalDst.SinAddr[3]).String()
-	targetPort = (uint16(originalDst.SinPort[0]) << 8) | uint16(originalDst.SinPort[1])
-	return
-}
 
 // HTTP proxy request handler
-func (c *Config) handleInternalConnection(conn net.Conn) {
+func (c *Config) internalProxy(conn net.Conn) {
 	defer conn.Close()
-	targetAddr, targetPort, err := findTargetFromConnection(conn)
+	// Get original destination address
+	destAddr, destPort, err := findTargetFromConnection(conn)
 	if err != nil {
 		return
 	}
-	targetDestination := fmt.Sprintf("%s:%d", targetAddr, targetPort)
-	log.Printf("Original destination: %s\n", targetDestination)
+	targetDestination := fmt.Sprintf("%s:%d", destAddr, destPort)
 
+	// Send traffic to endpoint gateway
+	endpoint := fmt.Sprintf("%s:%d", destAddr, c.ClusterPort)
+	if c.ClusterAddress != "" {
+		endpoint = fmt.Sprintf("%s:%d", c.ClusterAddress, c.ClusterPort)
+	}
 	// Check that the original destination address is reachable from the proxy
-	targetConn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", c.ClusterAddress, c.ClusterPort), 5*time.Second)
+	targetConn, err := net.DialTimeout("tcp", endpoint, 5*time.Second)
 	if err != nil {
 		log.Printf("Failed to connect to original destination: %v", err)
 		return
 	}
 	defer targetConn.Close()
+
+	log.Printf("Connected to remote endpoint %s, original dest %s", endpoint, targetDestination)
+	//log.Printf("Internal proxy sending original destination: %s\n", targetDestination)
 	targetConn.Write([]byte(targetDestination))
 	tmp := make([]byte, 256)
 
+	// Ideally we wait here until our remote endpoint has recieved the targetDestination
 	targetConn.Read(tmp)
-	log.Printf("Internal connection from %s to %s\n", conn.RemoteAddr(), targetConn.RemoteAddr())
+
+	//log.Printf("Internal connection from %s to %s\n", conn.RemoteAddr(), targetConn.RemoteAddr())
 
 	// The following code creates two data transfer channels:
 	// - From the client to the target server (handled by a separate goroutine).
@@ -131,10 +113,13 @@ func (c *Config) handleExternalConnection(conn net.Conn) {
 		log.Print(err)
 	}
 	remoteAddress := string(tmp[:n])
+	log.Printf("WUT %s", remoteAddress)
+
 	if remoteAddress == fmt.Sprintf("%s:%d", c.Address, c.ProxyPort) {
 		log.Printf("Potential loopback")
 		return
 	}
+
 	// Check that the original destination address is reachable from the proxy
 	targetConn, err := net.DialTimeout("tcp", remoteAddress, 5*time.Second)
 	if err != nil {
