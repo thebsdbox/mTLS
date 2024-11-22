@@ -1,0 +1,160 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-01
+  labels:
+    env: demo1
+spec:
+  shareProcessNamespace: true
+  containers:
+    - name: pod-01
+      image: demo/demo:v1
+      resources:
+        requests:
+          memory: "64Mi"
+          cpu: "250m"
+        limits:
+          memory: "128Mi"
+          cpu: "500m"
+      env:
+        - name: CLIENT
+          value: "service2"
+    - name: mtls
+      image: kube-gateway/kube-gateway:v1
+      command: ["sleep", "infinity"] # For debugging
+      resources:
+        requests:
+          memory: "64Mi"
+          cpu: "250m"
+        limits:
+          memory: "128Mi"
+          cpu: "500m"
+      securityContext:
+        privileged: true
+        #capabilities:
+        #  add: ["IPC_LOCK", "SYS_ADMIN", "SYS_RESOURCE", "BPF"]
+      env:
+        - name: KUBE_NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+      volumeMounts:
+        - mountPath: /sys/kernel/debug
+          name: sys-kernel-debug
+        - name: cgroup
+          mountPath: /hostfs/sys/fs/cgroup
+  volumes:
+    - name: sys-kernel-debug
+      hostPath:
+        path: /sys/kernel/debug
+        type: DirectoryOrCreate
+    - name: cgroup
+      hostPath:
+        path: /sys/fs/cgroup
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-02
+  labels:
+    env: demo2
+spec:
+  shareProcessNamespace: true
+  containers:
+    - name: pod-02
+      image: demo/demo:v1
+      resources:
+        requests:
+          memory: "64Mi"
+          cpu: "250m"
+        limits:
+          memory: "128Mi"
+          cpu: "500m"
+      env:
+        - name: CLIENT
+          value: "service1"
+      volumeMounts:
+        - mountPath: /sys/kernel/debug
+          name: sys-kernel-debug
+    - name: mtls
+      image: kube-gateway/kube-gateway:v1
+      command: ["sleep", "infinity"] # For debugging
+      resources:
+        requests:
+          memory: "64Mi"
+          cpu: "250m"
+        limits:
+          memory: "128Mi"
+          cpu: "500m"
+      securityContext:
+        privileged:
+          true
+          #add: ["IPC_LOCK", "SYS_ADMIN", "SYS_RESOURCE", "BPF"]
+      env:
+        - name: KUBE_NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+      volumeMounts:
+        - mountPath: /sys/kernel/debug
+          name: sys-kernel-debug
+    #     - name: cgroup
+    #       mountPath: /hostfs/sys/fs/cgroup
+  volumes:
+    - name: sys-kernel-debug
+      hostPath:
+        path: /sys/kernel/debug
+        type: DirectoryOrCreate
+    # - name: cgroup
+    #   hostPath:
+    #     path: /sys/fs/cgroup
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: service1
+spec:
+  clusterIP: None # <= Don't forget!!
+  selector:
+    env: demo1
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: service2
+spec:
+  clusterIP: None # <= Don't forget!!
+  selector:
+    env: demo2
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kube-gateway
+spec:
+  selector:
+    matchLabels:
+      app: kube-gateway
+  template:
+    metadata:
+      labels:
+        app: kube-gateway
+    spec:
+      containers:
+        - name: kube-gateway
+          image: kube-gateway/kube-gateway:v1
+          securityContext:
+            privileged: true
+          env:
+            - name: KUBE_GATEWAY
+              value: "true"
+      terminationGracePeriodSeconds: 30
+      hostNetwork: true

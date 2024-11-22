@@ -25,18 +25,44 @@ int cg_connect4(struct bpf_sock_addr *ctx) {
   if (!conf)
     return 1;
 
-  // This prevents the proxy from proxying itself
-  if ((bpf_get_current_pid_tgid() >> 32) == conf->proxy_pid)
-    return 1;
-
   // This field contains the IPv4 address passed to the connect() syscall
   // a.k.a. connect to this socket destination address and port
   __u32 dst_addr = bpf_ntohl(ctx->user_ip4);
   __u32 destination = bpf_ntohl(dst_addr);
+  __u32 start = bpf_ntohl(conf->start_addr);
+  __u32 end = bpf_ntohl(conf->end_addr);
+
+  int mask = (-1) << (32 - conf->mask);
+  // bpf_printk("hex 0x%x 0x%x 0x%x", bpf_htonl(ctx->user_ip4), mask,
+  //            conf->network);
+  // bpf_printk("IP in bounds %pI4 %pI4 %pI4", &destination, &start, &end);
+
+  // If this packet is not part of the podCIDR range then return
+  if ((bpf_htonl(ctx->user_ip4) & mask) != conf->network) {
+    return 1;
+  }
+  bpf_printk("IP in bounds %pI4 %pI4 %pI4", &destination, &start, &end);
+
+  // bpf_printk("IP out of bounds %u %u %u", destination, start, end);
+  // bpf_printk("IP out of bounds %pI4 %pI4 %pI4", &destination, &start, &end);
+  // if (destination < conf->start_addr || destination > conf->end_addr) {
+
+  //   // bpf_printk("IP out of bounds %pI4 %pI4 %pI4", &destination, &start,
+  //   // &end);
+  //   return 1;
+  // }
 
   // This field contains the port number passed to the connect() syscall
   __u16 dst_port = bpf_ntohl(ctx->user_port) >> 16;
-  bpf_printk("Incoming %pI4:%d", &destination, dst_port);
+  __u64 pid = (bpf_get_current_pid_tgid() >> 32);
+
+  // This prevents the proxy from proxying itself
+
+  bpf_printk("[%d vs %d] incoming %pI4:%d", pid, conf->proxy_pid, &destination,
+             dst_port);
+  if (pid == conf->proxy_pid)
+    return 1;
+
   if (dst_port == 18001) {
     bpf_printk("Ignoring cluster to cluster");
     return 1;
@@ -52,13 +78,15 @@ int cg_connect4(struct bpf_sock_addr *ctx) {
   bpf_map_update_elem(&map_socks, &cookie, &sock, 0);
 
   // Redirect the connection to the proxy
-  ctx->user_ip4 = bpf_htonl(0x7f000001);              // 127.0.0.1 == proxy IP
+  ctx->user_ip4 = bpf_htonl(conf->proxy_addr);
+  // ctx->user_ip4 = bpf_htonl(0x7f000001);              // 127.0.0.1 == proxy
+  // IP
   ctx->user_port = bpf_htonl(conf->proxy_port << 16); // Proxy port
 
   __u32 source = ctx->user_ip4;
 
-  bpf_printk("Incoming redirect %pI4:%d to %pI4:%d", &destination, dst_port,
-             &source, bpf_ntohs(ctx->user_port));
+  bpf_printk("New Connect() [%d] %pI4:%d to %pI4:%d", cookie, &destination,
+             dst_port, &source, bpf_ntohs(ctx->user_port));
 
   return 1;
 }
@@ -86,8 +114,8 @@ int cg_sock_ops(struct bpf_sock_ops *ctx) {
     }
     __u32 destination = ctx->local_ip4;
 
-    bpf_printk("sockops hook successful %pI4:%d", &destination,
-               ctx->local_port);
+    // bpf_printk("sockops hook successful %pI4:%d", &destination,
+    //           ctx->local_port);
   }
 
   return 0;

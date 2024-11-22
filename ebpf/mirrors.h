@@ -10,6 +10,10 @@ struct Config {
   __u32 proxy_addr;
   __u16 proxy_port;
   __u64 proxy_pid;
+  __u32 start_addr; // Start of pod cidr
+  __u32 end_addr;   // end of pod cidr
+  __u32 network;
+  __u16 mask;
 };
 
 struct Socket {

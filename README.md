@@ -51,3 +51,13 @@ The steps:
 - TLS the data between and YoLo
 
 You can then inspect eBPF logs using `sudo cat /sys/kernel/debug/tracing/trace_pipe` to verify transparent proxy indeed intercepts the network traffic.
+
+## Quick reload
+```
+kubectl delete -f ./deployment.yaml ;\
+docker build -t kube-gateway/kube-gateway:v1 . ;\
+kind load docker-image  kube-gateway/kube-gateway:v1 ;\
+kubectl apply -f ./deployment.yaml
+```
+
+### 

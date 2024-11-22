@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -11,8 +12,8 @@ import (
 	"unsafe"
 )
 
-func startInternalListener() net.Listener {
-	proxyAddr := fmt.Sprintf("127.0.0.1:%d", PROXY_PORT)
+func (c *Config) startInternalListener() net.Listener {
+	proxyAddr := fmt.Sprintf("%s:%d", c.Address, c.ProxyPort)
 	listener, err := net.Listen("tcp", proxyAddr)
 	if err != nil {
 		log.Fatalf("Failed to start proxy server: %v", err)
@@ -21,8 +22,8 @@ func startInternalListener() net.Listener {
 	return listener
 }
 
-func startExternalListener() net.Listener {
-	proxyAddr := fmt.Sprintf("0.0.0.0:%d", PROXY_PORT+1)
+func (c *Config) startExternalListener() net.Listener {
+	proxyAddr := fmt.Sprintf("0.0.0.0:%d", c.ClusterPort)
 	listener, err := net.Listen("tcp", proxyAddr)
 	if err != nil {
 		log.Fatalf("Failed to start proxy server: %v", err)
@@ -32,17 +33,21 @@ func startExternalListener() net.Listener {
 }
 
 // Blocking function
-func start(listener net.Listener, internal bool) {
+func (c *Config) start(listener net.Listener, internal bool) {
 	for {
 		conn, err := listener.Accept()
-		if err != nil {
+		if (err != nil) && !errors.Is(err, net.ErrClosed) {
 			log.Printf("Failed to accept connection: %v", err)
 			continue
 		}
 		if internal {
-			go handleInternalConnection(conn)
+			log.Printf("internal proxy connection from %s -> %s", conn.RemoteAddr().String(), conn.LocalAddr().String())
+
+			go c.handleInternalConnection(conn)
 		} else {
-			go handleExternalConnection(conn)
+			log.Printf("external proxy connection from %s -> %s", conn.RemoteAddr().String(), conn.LocalAddr().String())
+
+			go c.handleExternalConnection(conn)
 		}
 	}
 }
@@ -74,17 +79,17 @@ func findTargetFromConnection(conn net.Conn) (targetAddr string, targetPort uint
 }
 
 // HTTP proxy request handler
-func handleInternalConnection(conn net.Conn) {
+func (c *Config) handleInternalConnection(conn net.Conn) {
 	defer conn.Close()
 	targetAddr, targetPort, err := findTargetFromConnection(conn)
 	if err != nil {
 		return
 	}
 	targetDestination := fmt.Sprintf("%s:%d", targetAddr, targetPort)
-	fmt.Printf("Original destination: %s\n", targetDestination)
+	log.Printf("Original destination: %s\n", targetDestination)
 
 	// Check that the original destination address is reachable from the proxy
-	targetConn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", "0.0.0.0", 18001), 5*time.Second)
+	targetConn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", c.ClusterAddress, c.ClusterPort), 5*time.Second)
 	if err != nil {
 		log.Printf("Failed to connect to original destination: %v", err)
 		return
@@ -94,8 +99,7 @@ func handleInternalConnection(conn net.Conn) {
 	tmp := make([]byte, 256)
 
 	targetConn.Read(tmp)
-	fmt.Printf("%s\n", tmp)
-	fmt.Printf("Proxying connection from %s to %s\n", conn.RemoteAddr(), targetConn.RemoteAddr())
+	log.Printf("Internal connection from %s to %s\n", conn.RemoteAddr(), targetConn.RemoteAddr())
 
 	// The following code creates two data transfer channels:
 	// - From the client to the target server (handled by a separate goroutine).
@@ -113,30 +117,34 @@ func handleInternalConnection(conn net.Conn) {
 }
 
 // HTTP proxy request handler
-func handleExternalConnection(conn net.Conn) {
+func (c *Config) handleExternalConnection(conn net.Conn) {
 	defer conn.Close()
-	targetAddr, targetPort, err := findTargetFromConnection(conn)
-	if err != nil {
-		return
-	}
-	fmt.Printf("External: %s:%d\n", targetAddr, targetPort)
+	// targetAddr, targetPort, err := findTargetFromConnection(conn)
+	// if err != nil {
+	// 	return
+	// }
+	// fmt.Printf("External: %s:%d\n", targetAddr, targetPort)
 
 	tmp := make([]byte, 256)
 	n, err := conn.Read(tmp)
 	if err != nil {
 		log.Print(err)
 	}
-
+	remoteAddress := string(tmp[:n])
+	if remoteAddress == fmt.Sprintf("%s:%d", c.Address, c.ProxyPort) {
+		log.Printf("Potential loopback")
+		return
+	}
 	// Check that the original destination address is reachable from the proxy
-	targetConn, err := net.DialTimeout("tcp", string(tmp[:n]), 5*time.Second)
+	targetConn, err := net.DialTimeout("tcp", remoteAddress, 5*time.Second)
 	if err != nil {
 		log.Printf("Failed to connect to original destination[%s]: %v", string(tmp), err)
 		return
 	}
 	defer targetConn.Close()
-	conn.Write([]byte{'Y'})
+	conn.Write([]byte{'Y'}) // Send a response to kickstart the comms
 
-	fmt.Printf("Proxying connection from %s to %s\n", conn.RemoteAddr(), targetConn.RemoteAddr())
+	log.Printf("External connection from %s to %s\n", conn.RemoteAddr(), targetConn.RemoteAddr())
 
 	// The following code creates two data transfer channels:
 	// - From the client to the target server (handled by a separate goroutine).
