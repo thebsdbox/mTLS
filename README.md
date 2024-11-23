@@ -2,13 +2,13 @@
 
 It's a service mesh (kind of).
 
-## How to Run
+## How to Build and Run
 
-First build and run the eBPF program:
+
 ```
 go generate
-go build
-sudo ./proxy
+go build -o smesh
+sudo ./smesh
 ```
 
 ## Original Architecture
