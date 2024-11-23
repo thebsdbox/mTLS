@@ -1,0 +1,6 @@
+certificates/ca.crt
+certificates/ca.key
+certificates/pod-01.crt
+certificates/pod-01.key
+certificates/pod-02.crt
+certificates/pod-02.key

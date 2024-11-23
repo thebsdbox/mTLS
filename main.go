@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -20,6 +19,8 @@ import (
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/rlimit"
+	"github.com/docker/docker/pkg/parsers/kernel"
+	"github.com/gookit/slog"
 )
 
 const (
@@ -29,11 +30,13 @@ const (
 type Config struct {
 	ProxyPort      int
 	ClusterPort    int
+	ClusterTLSPort int
 	Address        string
 	ClusterAddress string // For Debug purposes
 	CgroupOverride string // For Debug purposes
 
-	PodCIDR string
+	PodCIDR      string
+	Certificates *certs
 }
 
 // SockAddrIn is a struct to hold the sockaddr_in structure for IPv4 "retrieved" by the SO_ORIGINAL_DST.
@@ -51,12 +54,15 @@ func main() {
 	flag.StringVar(&c.ClusterAddress, "overrideAddress", "", "Address to force all traffic to")
 	flag.StringVar(&c.CgroupOverride, "cgroupPath", "/sys/fs/cgroup", "Path for cgroup")
 	flag.IntVar(&c.ProxyPort, "proxyPort", 18000, "Port for internal proxy")
-	flag.IntVar(&c.ClusterPort, "clusterPort", 18001, "External port for cluster connectivity (TLS)")
+	flag.IntVar(&c.ClusterPort, "clusterPort", 18001, "External port for cluster connectivity")
+	flag.IntVar(&c.ClusterTLSPort, "clusterTLSPort", 18443, "External port for cluster connectivity (TLS)")
 	flag.StringVar(&c.PodCIDR, "podCIDR", "10.244.0.0/16", "The CIDR range used for POD IP addresses")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	slog.Info("Starting the SMESH 🐝")
 
 	// Lookup for environment variable
 	envAddress, exists := os.LookupEnv("KUBE_NODE_NAME")
@@ -71,16 +77,26 @@ func main() {
 	}
 	c.Address = i.String()
 	if !gateway {
+
+		v, err := kernel.GetKernelVersion()
+		if err != nil {
+			slog.Errorf("unable to parse kernel version %v", err)
+		}
+
+		slog.Infof("detected Kernel %d.%d.x", v.Kernel, v.Major)
+
 		// Remove resource limits for kernels <5.11.
-		if err := rlimit.RemoveMemlock(); err != nil {
-			log.Print("Removing memlock:", err)
+		if v.Kernel >= 5 && v.Major >= 11 {
+			if err := rlimit.RemoveMemlock(); err != nil {
+				slog.Print("Removing memlock:", err)
+			}
 		}
 
 		// Load the compiled eBPF ELF and load it into the kernel
 		// NOTE: we could also pin the eBPF program
 		var objs mirrorsObjects
 		if err := loadMirrorsObjects(&objs, nil); err != nil {
-			log.Print("Error loading eBPF objects:", err)
+			slog.Print("Error loading eBPF objects:", err)
 		}
 		defer objs.Close()
 
@@ -91,7 +107,7 @@ func main() {
 			Program: objs.CgConnect4,
 		})
 		if err != nil {
-			log.Print("Attaching CgConnect4 program to Cgroup:", err)
+			slog.Print("Attaching CgConnect4 program to Cgroup:", err)
 		}
 		defer connect4Link.Close()
 
@@ -101,7 +117,7 @@ func main() {
 			Program: objs.CgSockOps,
 		})
 		if err != nil {
-			log.Print("Attaching CgSockOps program to Cgroup:", err)
+			slog.Print("Attaching CgSockOps program to Cgroup:", err)
 		}
 		defer sockopsLink.Close()
 
@@ -111,7 +127,7 @@ func main() {
 			Program: objs.CgSockOpt,
 		})
 		if err != nil {
-			log.Print("Attaching CgSockOpt program to Cgroup:", err)
+			slog.Print("Attaching CgSockOpt program to Cgroup:", err)
 		}
 		defer sockoptLink.Close()
 
@@ -145,7 +161,7 @@ func main() {
 
 		err = objs.mirrorsMaps.MapConfig.Update(&key, &config, ebpf.UpdateAny)
 		if err != nil {
-			log.Fatalf("Failed to update proxyMaps map: %v", err)
+			slog.Fatalf("Failed to update proxyMaps map: %v", err)
 		}
 
 		// Start the proxy server on the localhost
@@ -159,6 +175,23 @@ func main() {
 
 	externalListener := c.startExternalListener()
 	defer externalListener.Close()
+
+	// Attempt to get certificates from API
+	c.Certificates, err = getKubeCerts(os.Getenv("KUBECONFIG"))
+	if err != nil {
+		slog.Error(err)
+		// Attempt to get from environment secrets
+		c.Certificates, err = getEnvCerts()
+		if err != nil {
+			slog.Error(err)
+		}
+	}
+	// If we have secrets enable a TLS listener
+	if c.Certificates != nil {
+		externalTLSListener := c.startExternalTLSListener()
+		defer externalTLSListener.Close()
+		go c.startTLS(externalTLSListener)
+	}
 
 	go c.start(externalListener, false)
 	_, exists = os.LookupEnv("DEBUG")

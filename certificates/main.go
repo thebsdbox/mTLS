@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -12,21 +13,41 @@ import (
 	"log/slog"
 	"math/big"
 	"os"
+	"os/user"
 	"time"
+
+	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 var log *slog.Logger
 
 func main() {
+	u, _ := user.Current()
+
 	log = slog.New(slog.NewTextHandler(os.Stdout, nil))
 	log.Info("Starting Certicate creation 🔏")
 	ca := flag.Bool("ca", false, "Create a CA")
 	certName := flag.String("cert", "", "Create a certificate from the CA")
+	certSecret := flag.String("secret", "", "Create a secret in Kubernetes with the certificate")
+	kubeconfig := flag.String("kubeconfig", u.HomeDir+"/.kube/config", "Path to Kubernetes config")
+
+	flag.Parse()
 	if *ca {
 		createCA()
 	}
 	if *certName != "" {
 		createCertificate(*certName)
+	}
+	if *certSecret != "" {
+		err := loadSecret(*certSecret, *kubeconfig)
+		if err != nil {
+			log.Error("secret", "msg", err)
+		}
 	}
 }
 
@@ -137,4 +158,69 @@ func createCertificate(name string) {
 	keyOut.Close()
 	log.Info(fmt.Sprintf("Written %s", key))
 
+}
+
+func loadSecret(name, kubeconfigPath string) error {
+	var kubeconfig *rest.Config
+
+	if kubeconfigPath != "" {
+		config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+		if err != nil {
+			return fmt.Errorf("unable to load kubeconfig from %s: %v", kubeconfigPath, err)
+		}
+		kubeconfig = config
+	} else {
+		config, err := rest.InClusterConfig()
+		if err != nil {
+			return fmt.Errorf("unable to load in-cluster config: %v", err)
+		}
+		kubeconfig = config
+	}
+
+	// build the client set
+	clientSet, err := kubernetes.NewForConfig(kubeconfig)
+	if err != nil {
+		return fmt.Errorf("creating the kubernetes client set - %s", err)
+	}
+
+	certificate := fmt.Sprint(name + ".crt")
+	key := fmt.Sprint(name + ".key")
+	certData, err := os.ReadFile(certificate)
+	if err != nil {
+		return fmt.Errorf("unable to read certificate %v", err)
+	}
+	keyData, err := os.ReadFile(key)
+	if err != nil {
+		return fmt.Errorf("unable to read key %v", err)
+	}
+	caData, err := os.ReadFile("ca.crt")
+	if err != nil {
+		return fmt.Errorf("unable to read ca %v", err)
+	}
+
+	secretMap := make(map[string][]byte)
+
+	secretMap["ca"] = caData
+	secretMap["cert"] = certData
+	secretMap["key"] = keyData
+
+	secret := v1.Secret{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "Secret",
+			APIVersion: "v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name + "-smesh",
+		},
+		Data: secretMap,
+		Type: v1.SecretTypeOpaque,
+	}
+
+	s, err := clientSet.CoreV1().Secrets(v1.NamespaceDefault).Create(context.TODO(), &secret, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("unable to create secrets %v", err)
+	}
+	log.Info(fmt.Sprintf("Created Secret %s", s.Name))
+
+	return nil
 }
