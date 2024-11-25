@@ -10,44 +10,53 @@ import (
 	"encoding/pem"
 	"flag"
 	"fmt"
-	"log/slog"
 	"math/big"
+	"net"
 	"os"
+	"os/signal"
 	"os/user"
+	"syscall"
 	"time"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-)
 
-var log *slog.Logger
+	"github.com/gookit/slog"
+)
 
 func main() {
 	u, _ := user.Current()
 
-	log = slog.New(slog.NewTextHandler(os.Stdout, nil))
-	log.Info("Starting Certicate creation 🔏")
+	slog.Info("Starting Certicate creation 🔏")
 	ca := flag.Bool("ca", false, "Create a CA")
 	certName := flag.String("cert", "", "Create a certificate from the CA")
+	certIP := flag.String("ip", "192.168.0.1", "Create a certificate from the CA")
+
 	certSecret := flag.String("secret", "", "Create a secret in Kubernetes with the certificate")
 	kubeconfig := flag.String("kubeconfig", u.HomeDir+"/.kube/config", "Path to Kubernetes config")
+
+	watch := flag.Bool("watch", false, "Watch Kubernetes for pods being created and create certs")
 
 	flag.Parse()
 	if *ca {
 		createCA()
 	}
 	if *certName != "" {
-		createCertificate(*certName)
+		createCertificate(*certName, *certIP)
 	}
 	if *certSecret != "" {
-		err := loadSecret(*certSecret, *kubeconfig)
+		err := loadSecret(*certSecret, *kubeconfig, nil)
 		if err != nil {
-			log.Error("secret", "msg", err)
+			slog.Error("secret", "msg", err)
 		}
+	}
+	if *watch {
+		watcher(*kubeconfig)
 	}
 }
 
@@ -75,33 +84,33 @@ func createCA() error {
 	pub := &priv.PublicKey
 	ca_b, err := x509.CreateCertificate(rand.Reader, ca, ca, pub, priv)
 	if err != nil {
-		log.Error("create ca failed")
+		slog.Error("create ca failed")
 		return err
 	}
 
 	// Public key
 	certOut, err := os.Create("ca.crt")
 	if err != nil {
-		log.Error("create ca failed", err)
+		slog.Error("create ca failed", err)
 		return err
 	}
 	pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: ca_b})
 	certOut.Close()
-	log.Info("written ca.crt")
+	slog.Info("written ca.crt")
 
 	// Private key
 	keyOut, err := os.OpenFile("ca.key", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
-		log.Error("create ca failed", err)
+		slog.Error("create ca failed", err)
 		return err
 	}
 	pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)})
 	keyOut.Close()
-	log.Info("written ca.key")
+	slog.Info("written ca.key")
 	return nil
 }
 
-func createCertificate(name string) {
+func createCertificate(name, ip string) {
 	certificate := fmt.Sprint(name + ".crt")
 	key := fmt.Sprint(name + ".key")
 	// Load CA
@@ -113,7 +122,7 @@ func createCertificate(name string) {
 	if err != nil {
 		panic(err)
 	}
-
+	ipAddress := net.ParseIP(ip)
 	// Prepare certificate
 	cert := &x509.Certificate{
 		SerialNumber: big.NewInt(1658),
@@ -131,6 +140,8 @@ func createCertificate(name string) {
 		SubjectKeyId: []byte{1, 2, 3, 4, 6},
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
 		KeyUsage:     x509.KeyUsageDigitalSignature,
+		DNSNames:     []string{name},
+		IPAddresses:  []net.IP{ipAddress},
 	}
 	priv, _ := rsa.GenerateKey(rand.Reader, 2048)
 	pub := &priv.PublicKey
@@ -147,7 +158,7 @@ func createCertificate(name string) {
 	}
 	pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: cert_b})
 	certOut.Close()
-	log.Info(fmt.Sprintf("Written %s", certificate))
+	slog.Info(fmt.Sprintf("Written %s", certificate))
 
 	// Private key
 	keyOut, err := os.OpenFile(key, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
@@ -156,31 +167,33 @@ func createCertificate(name string) {
 	}
 	pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)})
 	keyOut.Close()
-	log.Info(fmt.Sprintf("Written %s", key))
+	slog.Info(fmt.Sprintf("Written %s", key))
 
 }
 
-func loadSecret(name, kubeconfigPath string) error {
-	var kubeconfig *rest.Config
-
-	if kubeconfigPath != "" {
-		config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
-		if err != nil {
-			return fmt.Errorf("unable to load kubeconfig from %s: %v", kubeconfigPath, err)
+func loadSecret(name, kubeconfigPath string, clientSet *kubernetes.Clientset) error {
+	if clientSet == nil {
+		var kubeconfig *rest.Config
+		var err error
+		if kubeconfigPath != "" {
+			config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+			if err != nil {
+				return fmt.Errorf("unable to load kubeconfig from %s: %v", kubeconfigPath, err)
+			}
+			kubeconfig = config
+		} else {
+			config, err := rest.InClusterConfig()
+			if err != nil {
+				return fmt.Errorf("unable to load in-cluster config: %v", err)
+			}
+			kubeconfig = config
 		}
-		kubeconfig = config
-	} else {
-		config, err := rest.InClusterConfig()
-		if err != nil {
-			return fmt.Errorf("unable to load in-cluster config: %v", err)
-		}
-		kubeconfig = config
-	}
 
-	// build the client set
-	clientSet, err := kubernetes.NewForConfig(kubeconfig)
-	if err != nil {
-		return fmt.Errorf("creating the kubernetes client set - %s", err)
+		// build the client set
+		clientSet, err = kubernetes.NewForConfig(kubeconfig)
+		if err != nil {
+			return fmt.Errorf("creating the kubernetes client set - %s", err)
+		}
 	}
 
 	certificate := fmt.Sprint(name + ".crt")
@@ -220,7 +233,122 @@ func loadSecret(name, kubeconfigPath string) error {
 	if err != nil {
 		return fmt.Errorf("unable to create secrets %v", err)
 	}
-	log.Info(fmt.Sprintf("Created Secret %s", s.Name))
+	slog.Info(fmt.Sprintf("Created Secret %s", s.Name))
 
 	return nil
+}
+
+func watcher(kubeconfigPath string) error {
+	var kubeconfig *rest.Config
+
+	if kubeconfigPath != "" {
+		config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+		if err != nil {
+			return fmt.Errorf("unable to load kubeconfig from %s: %v", kubeconfigPath, err)
+		}
+		kubeconfig = config
+	} else {
+		config, err := rest.InClusterConfig()
+		if err != nil {
+			return fmt.Errorf("unable to load in-cluster config: %v", err)
+		}
+		kubeconfig = config
+	}
+
+	// build the client set
+	clientSet, err := kubernetes.NewForConfig(kubeconfig)
+	if err != nil {
+		return fmt.Errorf("creating the kubernetes client set - %s", err)
+	}
+
+	factory := informers.NewSharedInformerFactory(clientSet, 0)
+
+	informer := factory.Core().V1().Pods().Informer()
+
+	_, err = informer.AddEventHandler(&informerHandler{clientset: clientSet})
+	if err != nil {
+		return err
+	}
+	stop := make(chan struct{}, 2)
+
+	go informer.Run(stop)
+	forever := make(chan os.Signal, 1)
+	signal.Notify(forever, syscall.SIGINT, syscall.SIGTERM)
+	<-forever
+	stop <- struct{}{}
+	close(forever)
+	close(stop)
+	return nil
+}
+
+type informerHandler struct {
+	clientset *kubernetes.Clientset
+}
+
+func (i *informerHandler) OnUpdate(oldObj, newObj interface{}) {
+	newPod := newObj.(*v1.Pod)
+	oldPod := oldObj.(*v1.Pod)
+
+	// Inspect the changes
+	if oldPod.Status.PodIP != newPod.Status.PodIP && newPod.Status.PodIP != "" {
+		createCertificate(newPod.Name, newPod.Status.PodIP)
+		loadSecret(newPod.Name, "", i.clientset)
+	}
+}
+
+func (i *informerHandler) OnDelete(obj interface{}) {
+	p := obj.(*v1.Pod)
+	name := fmt.Sprintf("%s-smesh", p.Name)
+	err := i.clientset.CoreV1().Secrets(p.Namespace).Delete(context.TODO(), name, metav1.DeleteOptions{})
+	if err != nil {
+		slog.Errorf("Error deleting secret %v", err)
+	} else {
+		slog.Infof("Deleted secret %d", name)
+	}
+
+}
+
+func (i *informerHandler) OnAdd(obj interface{}, b bool) {
+	// p := obj.(*corev1.Pod)
+
+	// // dp := obj.(*v1.Deployment)
+	// // if dp.ObjectMeta.Annotations["needFluentd"] == "yes" {
+
+	// p2, err := i.clientset.CoreV1().Pods(p.Namespace).Get(context.TODO(), p.Name, metav1.GetOptions{})
+	// if err != nil {
+	// 	klog.Infoln(err)
+	// }
+
+	// klog.Infof("ADD: the old version %s %s %s", p2.Name, p2.ObjectMeta.ResourceVersion, p2.Status.PodIP)
+	// fluentContainer := corev1.EphemeralContainer{
+	// 	EphemeralContainerCommon: corev1.EphemeralContainerCommon{
+	// 		Name:  "fluentd-sidecar",
+	// 		Image: "fluent/fluentd:v1.15-debian-1",
+	// 		Env: []corev1.EnvVar{
+	// 			{
+	// 				Name:  "FLUENTD_CONF",
+	// 				Value: "fluentd.conf",
+	// 			},
+	// 		},
+	// 	},
+	// }
+
+	// p2.Spec.EphemeralContainers = append(p2.Spec.EphemeralContainers, fluentContainer)
+	// //dp2.Spec.Template.Spec.Volumes = append(dp2.Spec.Template.Spec.Volumes, fluentVolumne)
+	// p2, err = i.clientset.CoreV1().Pods(p2.Namespace).Update(context.Background(), p2, metav1.UpdateOptions{})
+	// if err != nil {
+	// 	klog.Infoln(err)
+	// }
+
+	// p = p2.DeepCopy()
+	// klog.Infof("ADD: the new version %s %s", p.Name, p.ObjectMeta.ResourceVersion)
+
+	// // resourceVersion should not be set on objects to be created
+	// // 可能的处理方法 需要先更新这个deploy
+
+	// // _, err := i.clientset.AppsV1().Deployments(dp.Namespace).Create(context.Background(), dp, metav1.CreateOptions{})
+	// // if err != nil {
+
+	// // 	klog.Infoln(err)
+	// // }
 }

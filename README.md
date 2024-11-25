@@ -35,12 +35,12 @@ This is the barebones of what I needed to achieve in order to transparently move
 │   │  Finds original destination │                     │     │                           │
 │   │  Changes destination to lo  │                     │     │                           │
 │   │                             │                     │     │                           │
-│   ▼  Our TLS listener sends     │                     │     │                           │
+│   ▼  Our listener sends         │                     │     │                           │
 │127.0.0.1:18000                  │                     │0.0.0.0:18001                    │
 │         │                       │                     │     ▲                           │
 └─────────┼───────────────────────┘                     └─────┼───────────────────────────┘
           │                                                   │                            
-          └────────────────────────🔐─────────────────────────┘                            
+          └───────────────────────────────────────────────────┘                            
             Uses original destination with a modified port                                 
 ```
 
@@ -62,7 +62,29 @@ The steps:
 
 ## Version (zero dot zero dot) two (TLS)
 
-I'll do it after lunch.
+Now pods we care about will mount `ca.crt` and their own `.crt/.key` and use those when communicating.
+Additionally we have a program that "watches" pods, specifically the `update()` and when a pod gets an IP, then it will create the certs/secret will the required detail.
+
+```
+┌─────────────────────────────────┐                     ┌─────────────────────────────────┐
+│Pod-01                           │                     │                           Pod-02│
+│10.0.0.1 x─x─x─x─► 10.0.2.2:80   │                     │     ┌────────────────►  10.0.2.2│
+│   │  eBPF captures the socket   │                     │     │   :80                     │
+│   │  Finds original destination │                     │     │                           │
+│   │  Changes destination to lo  │                     │     │                           │
+│   │                             │                     │     │                           │
+│   ▼  Our TLS listener sends     │                     │     │                           │
+│127.0.0.1:18000                  │                     │0.0.0.0:18001                    │
+│         │                       │                     │     ▲                           │
+└─────────┼───────────────────────┘                     └─────┼───────────────────────────┘
+          │                                                   │                            
+          └────────────────────────🔐─────────────────────────┘                            
+            Uses original destination with a modified port                                 
+```
+### Observations
+
+- There is a delay as the sidecar will error as the secret usually doesn't exist in time.
+- The eBPF code is still highly buggy :D 
 
 ## Troubleshooting
 You can then inspect eBPF logs using `sudo cat /sys/kernel/debug/tracing/trace_pipe` to verify transparent proxy indeed intercepts the network traffic.

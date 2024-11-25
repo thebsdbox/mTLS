@@ -15,7 +15,6 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/apparentlymart/go-cidr/cidr"
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/rlimit"
@@ -76,6 +75,13 @@ func main() {
 		panic(err)
 	}
 	c.Address = i.String()
+
+	// Overwrite the podcidr
+	podCIDR, exists := os.LookupEnv("POD_CIDR")
+	if exists {
+		c.PodCIDR = podCIDR
+	}
+
 	if !gateway {
 
 		v, err := kernel.GetKernelVersion()
@@ -131,11 +137,6 @@ func main() {
 		}
 		defer sockoptLink.Close()
 
-		_, cidrNet, err := net.ParseCIDR(c.PodCIDR)
-		if err != nil {
-			panic(err)
-		}
-		start, end := cidr.AddressRange(cidrNet)
 		cidr := strings.Split(c.PodCIDR, "/")
 		if len(cidr) < 1 {
 			panic(fmt.Errorf("error parsing cidr %s", c.PodCIDR))
@@ -153,8 +154,6 @@ func main() {
 			ProxyPort: uint16(c.ProxyPort),
 			ProxyPid:  uint64(os.Getpid()),
 			ProxyAddr: uint32(ToInt(c.Address)),
-			StartAddr: uint32(ToInt(start.String())),
-			EndAddr:   uint32(ToInt(end.String())),
 			Network:   uint32(ToInt(cidr[0])),
 			Mask:      uint16(i),
 		}

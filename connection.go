@@ -36,14 +36,23 @@ func (c *Config) startExternalListener() net.Listener {
 
 func (c *Config) startExternalTLSListener() net.Listener {
 	proxyAddr := fmt.Sprintf("0.0.0.0:%d", c.ClusterTLSPort)
-	caCertPool := x509.NewCertPool()
-	caCertPool.AppendCertsFromPEM(c.Certificates.ca)
 
+	caCertPool := x509.NewCertPool()
+	if !caCertPool.AppendCertsFromPEM(c.Certificates.ca) {
+		log.Fatalf("could not append CA")
+	}
 	certificate, err := tls.X509KeyPair(c.Certificates.cert, c.Certificates.key)
+
 	if err != nil {
 		log.Fatalf("could not load certificate: %v", err)
 	}
-	config := &tls.Config{Certificates: []tls.Certificate{certificate}, ClientAuth: tls.RequireAndVerifyClientCert} //<-- this is the key
+
+	config := &tls.Config{
+		ClientCAs:    caCertPool,
+		Certificates: []tls.Certificate{certificate},
+		ClientAuth:   tls.VerifyClientCertIfGiven,
+	} //<-- this is the key
+
 	listener, err := tls.Listen("tcp", proxyAddr, config)
 
 	// listener, err := net.Listen("tcp", proxyAddr)
@@ -100,14 +109,21 @@ func (c *Config) internalProxy(conn net.Conn) {
 	var endpoint string
 	// Send traffic to endpoint gateway
 	if c.Certificates != nil {
-		caCertPool := x509.NewCertPool()
-		caCertPool.AppendCertsFromPEM(c.Certificates.ca)
 
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(c.Certificates.ca) {
+			log.Fatalf("could not append CA")
+		}
 		certificate, err := tls.X509KeyPair(c.Certificates.cert, c.Certificates.key)
 		if err != nil {
 			log.Fatalf("could not load certificate: %v", err)
 		}
-		config := &tls.Config{Certificates: []tls.Certificate{certificate}, ClientAuth: tls.RequireAndVerifyClientCert} //<-- this is the key
+
+		config := &tls.Config{
+			RootCAs:      caCertPool,
+			Certificates: []tls.Certificate{certificate},
+			ClientAuth:   tls.VerifyClientCertIfGiven,
+		} //<-- this is the key
 
 		endpoint = fmt.Sprintf("%s:%d", destAddr, c.ClusterTLSPort)
 		if c.ClusterAddress != "" {
@@ -115,7 +131,7 @@ func (c *Config) internalProxy(conn net.Conn) {
 		}
 		targetConn, err = tls.Dial("tcp", endpoint, config)
 		if err != nil {
-			slog.Printf("Failed to connect to original destination: %v", err)
+			slog.Printf("Failed to connect to destination TLS proxy: %v", err)
 			return
 		}
 	} else {
@@ -134,7 +150,11 @@ func (c *Config) internalProxy(conn net.Conn) {
 
 	slog.Printf("Connected to remote endpoint %s, original dest %s", endpoint, targetDestination)
 	//log.Printf("Internal proxy sending original destination: %s\n", targetDestination)
-	targetConn.Write([]byte(targetDestination))
+	_, err = targetConn.Write([]byte(targetDestination))
+	if err != nil {
+		slog.Printf("Failed to send original destination: %v", err)
+	}
+
 	tmp := make([]byte, 256)
 
 	// Ideally we wait here until our remote endpoint has recieved the targetDestination
@@ -203,20 +223,29 @@ func (c *Config) handleExternalConnection(conn net.Conn) {
 // Unencrypted external connection
 func (c *Config) handleTLSExternalConnection(conn net.Conn) {
 	defer conn.Close()
-	caCertPool := x509.NewCertPool()
-	caCertPool.AppendCertsFromPEM(c.Certificates.ca)
+	var tConn *tls.Conn = conn.(*tls.Conn)
+	// caCertPool := x509.NewCertPool()
+	// if !caCertPool.AppendCertsFromPEM(c.Certificates.ca) {
+	// 	log.Fatalf("could not append CA")
+	// }
 
-	certificate, err := tls.X509KeyPair(c.Certificates.cert, c.Certificates.key)
-	if err != nil {
-		log.Fatalf("could not load certificate: %v", err)
-	}
-	config := &tls.Config{Certificates: []tls.Certificate{certificate}, ClientAuth: tls.RequireAndVerifyClientCert} //<-- this is the key
+	// certificate, err := tls.X509KeyPair(c.Certificates.cert, c.Certificates.key)
+	// if err != nil {
+	// 	log.Fatalf("could not load certificate: %v", err)
+	// }
+
+	// config := &tls.Config{
+	// 	RootCAs:      caCertPool,
+	// 	Certificates: []tls.Certificate{certificate},
+	// 	ClientAuth:   tls.VerifyClientCertIfGiven,
+	// } //<-- this is the key
 
 	tmp := make([]byte, 256)
-	n, err := conn.Read(tmp)
+	n, err := tConn.Read(tmp)
 	if err != nil {
 		slog.Print(err)
 	}
+
 	remoteAddress := string(tmp[:n])
 	slog.Printf("WUT %s", remoteAddress)
 
@@ -226,14 +255,14 @@ func (c *Config) handleTLSExternalConnection(conn net.Conn) {
 	}
 
 	// Check that the original destination address is reachable from the proxy
-	//targetConn, err := net.DialTimeout("tcp", remoteAddress, 5*time.Second)
-	targetConn, err := tls.Dial("tcp", remoteAddress, config)
+	targetConn, err := net.DialTimeout("tcp", remoteAddress, 5*time.Second)
+	//targetConn, err := tls.Dial("tcp", remoteAddress, config)
 	if err != nil {
 		slog.Printf("Failed to connect to original destination[%s]: %v", string(tmp), err)
 		return
 	}
 	defer targetConn.Close()
-	conn.Write([]byte{'Y'}) // Send a response to kickstart the comms
+	tConn.Write([]byte{'Y'}) // Send a response to kickstart the comms
 
 	slog.Printf("External TLS connection from %s to %s\n", conn.RemoteAddr(), targetConn.RemoteAddr())
 
@@ -241,12 +270,12 @@ func (c *Config) handleTLSExternalConnection(conn net.Conn) {
 	// - From the client to the target server (handled by a separate goroutine).
 	// - From the target server to the client (handled by the main goroutine).
 	go func() {
-		_, err = io.Copy(targetConn, conn)
+		_, err = io.Copy(targetConn, tConn)
 		if err != nil {
 			slog.Printf("Failed copying data to target: %v", err)
 		}
 	}()
-	_, err = io.Copy(conn, targetConn)
+	_, err = io.Copy(tConn, targetConn)
 	if err != nil {
 		slog.Printf("Failed copying data from target: %v", err)
 	}

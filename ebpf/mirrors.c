@@ -6,6 +6,9 @@
 
 #include "mirrors.h"
 #include "vmlinux.h"
+#include <bpf/bpf_helpers.h>
+
+extern int LINUX_KERNEL_VERSION __kconfig;
 
 // This hook is triggered when a process (inside the cgroup where this is
 // attached) calls the connect() syscall It redirect the connection to the
@@ -28,13 +31,11 @@ int cg_connect4(struct bpf_sock_addr *ctx) {
   // a.k.a. connect to this socket destination address and port
   __u32 dst_addr = bpf_ntohl(ctx->user_ip4);
   __u32 destination = bpf_ntohl(dst_addr);
-  __u32 start = bpf_ntohl(conf->start_addr);
-  __u32 end = bpf_ntohl(conf->end_addr);
 
   int mask = (-1) << (32 - conf->mask);
   // bpf_printk("hex 0x%x 0x%x 0x%x", bpf_htonl(ctx->user_ip4), mask,
   //            conf->network);
-  // bpf_printk("IP in bounds %pI4 %pI4 %pI4", &destination, &start, &end);
+  bpf_printk("IP in bounds %pI4", &destination);
 
   // If this packet is not part of the podCIDR range then return
   if ((bpf_htonl(ctx->user_ip4) & mask) != conf->network) {
@@ -65,8 +66,16 @@ int cg_connect4(struct bpf_sock_addr *ctx) {
   __u32 pid_ns_id = 0;
 
   ns_pid_ppid(task, &ns_pid, &ns_ppid, &pid_ns_id);
-  bpf_printk("[%d vs %d] incoming %pI4:%d", conf->proxy_pid, ns_pid,
-             &destination, dst_port);
+
+  // Wrap this message as it has two many arguments for older kernels (invalid
+  // func unknown#177)
+  if (LINUX_KERNEL_VERSION > KERNEL_VERSION(6, 8, 0)) {
+    bpf_printk("[%d vs %d] incoming %pI4:%d", conf->proxy_pid, ns_pid,
+               &destination, dst_port);
+  } else {
+    bpf_printk("[%d vs %d] incoming %pI4", conf->proxy_pid, ns_pid,
+               &destination);
+  }
 
   if (ns_pid == conf->proxy_pid)
     return 1;
@@ -76,7 +85,7 @@ int cg_connect4(struct bpf_sock_addr *ctx) {
     return 1;
   }
 
-  if (dst_port == 18001) {
+  if (dst_port == 18000 || dst_port == 18001) {
     bpf_printk("Ignoring cluster to cluster");
     return 1;
   }
@@ -97,10 +106,14 @@ int cg_connect4(struct bpf_sock_addr *ctx) {
   ctx->user_port = bpf_htonl(conf->proxy_port << 16); // Proxy port
 
   __u32 source = ctx->user_ip4;
+  if (LINUX_KERNEL_VERSION > KERNEL_VERSION(6, 8, 0)) {
 
-  bpf_printk("New Connect() [%d] %pI4:%d to %pI4:%d", cookie, &destination,
-             dst_port, &source, bpf_ntohs(ctx->user_port));
-
+    bpf_printk("New Connect() [%d] %pI4:%d to %pI4:%d", cookie, &destination,
+               dst_port, &source, bpf_ntohs(ctx->user_port));
+  } else {
+    bpf_printk("New Connect() %pI4 to %pI4:%d", &destination, &source,
+               bpf_ntohs(ctx->user_port));
+  }
   return 1;
 }
 
@@ -185,8 +198,11 @@ int cg_sock_opt(struct bpf_sockopt *ctx) {
   sa->sin_port = bpf_htons(sock->dst_port);        // Destination Port
   ctx->retval = 0;
   __u32 address = sa->sin_addr.s_addr;
-  bpf_printk("Redirecting %pI4:%d %d", &address, bpf_ntohs(sa->sin_port),
-             ctx->sk->src_port);
+
+  if (LINUX_KERNEL_VERSION > KERNEL_VERSION(6, 8, 0)) {
+    bpf_printk("Redirecting %pI4:%d %d", &address, bpf_ntohs(sa->sin_port),
+               ctx->sk->src_port);
+  }
   return 1;
 }
 
