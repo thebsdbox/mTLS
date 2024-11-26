@@ -129,7 +129,10 @@ func (c *Config) internalProxy(conn net.Conn) {
 		if c.ClusterAddress != "" {
 			endpoint = fmt.Sprintf("%s:%d", c.ClusterAddress, c.ClusterPort)
 		}
-		targetConn, err = tls.Dial("tcp", endpoint, config)
+
+		// Set a timeout, mainly because connections can occur to pods that aren't ready
+		d := net.Dialer{Timeout: time.Second * 3}
+		targetConn, err = tls.DialWithDialer(&d, "tcp", endpoint, config)
 		if err != nil {
 			slog.Printf("Failed to connect to destination TLS proxy: %v", err)
 			return

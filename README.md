@@ -86,6 +86,34 @@ Additionally we have a program that "watches" pods, specifically the `update()` 
 - There is a delay as the sidecar will error as the secret usually doesn't exist in time.
 - The eBPF code is still highly buggy :D 
 
+### TLS in action
+
+#### Without the sidecar
+
+The original port of `9000` is still being send cleartext traffic.
+
+```
+    10.0.0.227.35928 > 10.0.1.54.9000: Flags [P.], cksum 0x1650 (incorrect -> 0xd116), seq 153:170, ack 1, win 507, options [nop,nop,TS val 1710156213 ecr 1761501942], length 17
+	0x0000:  4500 0045 8b67 4000 4006 9933 0a00 00e3  E..E.g@.@..3....
+	0x0010:  0a00 0136 8c58 2328 ed78 5fcb 31aa 5b9b  ...6.X#(.x_.1.[.
+	0x0020:  8018 01fb 1650 0000 0101 080a 65ee e9b5  .....P......e...
+	0x0030:  68fe 62f6 4865 6c6c 6f20 6672 6f6d 2070  h.b.Hello.from.p
+	0x0040:  6f64 2d30 31                             od-01
+```
+
+#### With the sidecar
+
+We can see that the destination port has been changed to the TLS port `18443`. 
+```
+    10.0.0.196.51740 > 10.0.1.132.18443: Flags [P.], cksum 0x1695 (incorrect -> 0xef2a), seq 1740:1779, ack 1827, win 502, options [nop,nop,TS val 3093655397 ecr 4140148653], length 39
+	0x0000:  4500 005b 7b63 4000 4006 a8f2 0a00 00c4  E..[{c@.@.......
+	0x0010:  0a00 0184 ca1c 480b 8a63 4d53 f134 4176  ......H..cMS.4Av
+	0x0020:  8018 01f6 1695 0000 0101 080a b865 6f65  .............eoe
+	0x0030:  f6c5 a7ad 1703 0300 2244 536d cf88 3385  ........"DSm..3.
+	0x0040:  263d d632 3795 b6b7 76c4 177d efee 9331  &=.27...v..}...1
+	0x0050:  2dcb 7c3e 5c16 7af6 9164 eb              -.|>\.z..d.
+```
+
 ## Troubleshooting
 You can then inspect eBPF logs using `sudo cat /sys/kernel/debug/tracing/trace_pipe` to verify transparent proxy indeed intercepts the network traffic.
 

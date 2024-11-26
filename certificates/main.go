@@ -303,7 +303,7 @@ func (i *informerHandler) OnDelete(obj interface{}) {
 	if err != nil {
 		slog.Errorf("Error deleting secret %v", err)
 	} else {
-		slog.Infof("Deleted secret %d", name)
+		slog.Infof("Deleted secret %s", name)
 	}
 
 }

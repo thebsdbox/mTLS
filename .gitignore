@@ -4,3 +4,7 @@ certificates/pod-01.crt
 certificates/pod-01.key
 certificates/pod-02.crt
 certificates/pod-02.key
+mirrors_bpfeb.go
+mirrors_bpfeb.o
+mirrors_bpfel.go
+mirrors_bpfel.o
