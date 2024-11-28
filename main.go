@@ -176,15 +176,15 @@ func main() {
 	defer externalListener.Close()
 
 	// Attempt to get certificates from API
-	c.Certificates, err = getKubeCerts(os.Getenv("KUBECONFIG"))
+	// c.Certificates, err = getKubeCerts(os.Getenv("KUBECONFIG"))
+	// if err != nil {
+	// 	slog.Error(err)
+	// Attempt to get from environment secrets
+	c.Certificates, err = getEnvCerts()
 	if err != nil {
 		slog.Error(err)
-		// Attempt to get from environment secrets
-		c.Certificates, err = getEnvCerts()
-		if err != nil {
-			slog.Error(err)
-		}
 	}
+	//}
 	// If we have secrets enable a TLS listener
 	if c.Certificates != nil {
 		externalTLSListener := c.startExternalTLSListener()

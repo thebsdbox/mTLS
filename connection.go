@@ -85,8 +85,10 @@ func (c *Config) start(listener net.Listener, internal bool) {
 func (c *Config) startTLS(listener net.Listener) {
 	for {
 		conn, err := listener.Accept()
-		if (err != nil) && !errors.Is(err, net.ErrClosed) {
-			slog.Printf("Failed to accept connection: %v", err)
+		if err != nil {
+			if !errors.Is(err, net.ErrClosed) { // Don't print closing connection error, just continue to the next
+				slog.Printf("Failed to accept connection: %v", err)
+			}
 			continue
 		}
 
@@ -190,7 +192,6 @@ func (c *Config) handleExternalConnection(conn net.Conn) {
 		slog.Print(err)
 	}
 	remoteAddress := string(tmp[:n])
-	slog.Printf("WUT %s", remoteAddress)
 
 	if remoteAddress == fmt.Sprintf("%s:%d", c.Address, c.ProxyPort) {
 		slog.Printf("Potential loopback")

@@ -101,7 +101,7 @@ The original port of `9000` is still being send cleartext traffic.
 	0x0040:  6f64 2d30 31                             od-01
 ```
 
-#### With the sidecar
+#### With the sidecar
 
 We can see that the destination port has been changed to the TLS port `18443`. 
 ```
