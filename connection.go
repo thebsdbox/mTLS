@@ -102,7 +102,7 @@ func (c *Config) startTLS(listener net.Listener) {
 func (c *Config) internalProxy(conn net.Conn) {
 	defer conn.Close()
 	// Get original destination address
-	destAddr, destPort, err := findTargetFromConnection(conn)
+	destAddr, destPort, err := c.findTargetFromConnection(conn)
 	if err != nil {
 		return
 	}
@@ -207,7 +207,7 @@ func (c *Config) handleExternalConnection(conn net.Conn) {
 	defer targetConn.Close()
 	conn.Write([]byte{'Y'}) // Send a response to kickstart the comms
 
-	slog.Printf("External connection from %s to %s\n", conn.RemoteAddr(), targetConn.RemoteAddr())
+	slog.Printf("External connection from %s to %s", conn.RemoteAddr(), targetConn.RemoteAddr())
 
 	// The following code creates two data transfer channels:
 	// - From the client to the target server (handled by a separate goroutine).
@@ -251,7 +251,6 @@ func (c *Config) handleTLSExternalConnection(conn net.Conn) {
 	}
 
 	remoteAddress := string(tmp[:n])
-	slog.Printf("WUT %s", remoteAddress)
 
 	if remoteAddress == fmt.Sprintf("%s:%d", c.Address, c.ProxyPort) {
 		slog.Printf("Potential loopback")
@@ -268,7 +267,7 @@ func (c *Config) handleTLSExternalConnection(conn net.Conn) {
 	defer targetConn.Close()
 	tConn.Write([]byte{'Y'}) // Send a response to kickstart the comms
 
-	slog.Printf("External TLS connection from %s to %s\n", conn.RemoteAddr(), targetConn.RemoteAddr())
+	slog.Printf("External TLS connection from %s to %s", conn.RemoteAddr(), targetConn.RemoteAddr())
 
 	// The following code creates two data transfer channels:
 	// - From the client to the target server (handled by a separate goroutine).

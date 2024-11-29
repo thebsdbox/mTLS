@@ -36,6 +36,8 @@ type Config struct {
 
 	PodCIDR      string
 	Certificates *certs
+
+	Socks *ebpf.Map
 }
 
 // SockAddrIn is a struct to hold the sockaddr_in structure for IPv4 "retrieved" by the SO_ORIGINAL_DST.
@@ -105,7 +107,6 @@ func main() {
 			slog.Print("Error loading eBPF objects:", err)
 		}
 		defer objs.Close()
-
 		// Attach eBPF programs to the root cgroup
 		connect4Link, err := link.AttachCgroup(link.CgroupOptions{
 			Path:    c.CgroupOverride,
@@ -165,7 +166,7 @@ func main() {
 
 		// Start the proxy server on the localhost
 		// We only demonstrate IPv4 in this example, but the same approach can be used for IPv6
-
+		c.Socks = objs.MapSocks
 		internalListener := c.startInternalListener()
 		defer internalListener.Close()
 		go c.start(internalListener, true)

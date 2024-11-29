@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sidecar-injector
+  labels:
+    app: sidecar-injector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sidecar-injector
+  template:
+    metadata:
+      labels:
+        app: sidecar-injector
+    spec:
+      serviceAccountName: sidecar-injector
+      containers:
+        - name: sidecar-injector
+          image: thebsdbox/smesh-sidecar:v1
+          #imagePullPolicy: Always
+          args:
+            - -service-name=sidecar-injector
+            - -sidecar-config-file=/etc/webhook/config/sidecarconfig.yaml
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "/prestop.sh"]
+          volumeMounts:
+            - name: webhook-config
+              mountPath: /etc/webhook/config
+          resources:
+            requests:
+              memory: 64Mi
+              cpu: 50m
+            limits:
+              memory: 100Mi
+              cpu: 100m
+
+      volumes:
+        - name: webhook-config
+          configMap:
+            name: sidecar-injector

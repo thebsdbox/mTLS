@@ -23,27 +23,30 @@ help:
 
 proxy: build_proxy push_proxy
 
-demo: build_demo push_demo
-
-watcher: build_watcher push_watcher
-
 build_proxy:
 	    @go generate
 		@docker build -t ${SMESHIMAGEFULLNAME} .
 
-build_demo:
-		@docker build -t ${DEMOIMAGEFULLNAME} ./demo
-
 push_proxy:
 	    @docker push ${SMESHIMAGEFULLNAME}
 
+demo: build_demo push_demo
+
+build_demo:
+		@docker build -t ${DEMOIMAGEFULLNAME} ./demo
+
 push_demo:
 	    @docker push ${DEMOIMAGEFULLNAME}
+
+watcher: build_watcher push_watcher
 
 build_watcher: 
 		@docker build -t ${WATCHERIMAGEFULLNAME} ./watcher
 
 push_watcher:
 	    @docker push ${WATCHERIMAGEFULLNAME}
+
+kind:
+		@kubectl delete -f ./manifests/deployment_sidecar_secret.yaml; make build_proxy; kind load docker-image thebsdbox/smesh-proxy:v1; kubectl apply -f ./manifests/deployment_sidecar_secret.yaml
 
 all: build push
