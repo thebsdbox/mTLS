@@ -31,9 +31,9 @@ spec:
             preStop:
               exec:
                 command: ["/bin/sh", "-c", "/prestop.sh"]
-          volumeMounts:
-            - name: webhook-config
-              mountPath: /etc/webhook/config
+          #volumeMounts:
+          #  - name: webhook-config
+          #    mountPath: /etc/webhook/config
           resources:
             requests:
               memory: 64Mi
@@ -42,7 +42,7 @@ spec:
               memory: 100Mi
               cpu: 100m
 
-      volumes:
-        - name: webhook-config
-          configMap:
-            name: sidecar-injector
+      #volumes:
+      # - name: webhook-config
+      #   configMap:
+      #     name: sidecar-injector

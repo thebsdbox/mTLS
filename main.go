@@ -181,11 +181,16 @@ func main() {
 	// if err != nil {
 	// 	slog.Error(err)
 	// Attempt to get from environment secrets
+
 	c.Certificates, err = getEnvCerts()
 	if err != nil {
 		slog.Error(err)
+		c.Certificates, err = getFSCerts()
+		if err != nil {
+			slog.Error(err)
+		}
 	}
-	//}
+
 	// If we have secrets enable a TLS listener
 	if c.Certificates != nil {
 		externalTLSListener := c.startExternalTLSListener()

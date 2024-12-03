@@ -105,3 +105,32 @@ func getEnvCerts() (*certs, error) {
 	}, nil
 
 }
+
+func getFSCerts() (*certs, error) {
+	f, err := os.ReadDir("/tmp")
+	if err != nil {
+		slog.Errorf("unable to parse /tmp [%v]", err)
+	} else {
+		for x := range f {
+			slog.Infof("%s", f[x].Name())
+		}
+	}
+	envca, err := os.ReadFile("/tmp/ca.crt")
+	if err != nil {
+		return nil, fmt.Errorf("unable to read secrets from filesystem [%v]", err)
+	}
+	envcert, err := os.ReadFile("/tmp/cert.crt")
+	if err != nil {
+		return nil, fmt.Errorf("unable to read secrets from filesystem [%v]", err)
+	}
+	envkey, err := os.ReadFile("/tmp/key.crt")
+	if err != nil {
+		return nil, fmt.Errorf("unable to read secrets from filesystem [%v]", err)
+	}
+	return &certs{
+		ca:   []byte(envca),
+		cert: []byte(envcert),
+		key:  []byte(envkey),
+	}, nil
+
+}
