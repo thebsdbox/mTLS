@@ -17,11 +17,10 @@ spec:
       serviceAccountName: sidecar-injector
       containers:
         - name: sidecar-injector
-          image: thebsdbox/smesh-sidecar:v1
+          image: thebsdbox/smesh-controller:v1
           #imagePullPolicy: Always
           args:
             - -service-name=sidecar-injector
-            - -sidecar-config-file=/etc/webhook/config/sidecarconfig.yaml
           env:
             - name: POD_NAMESPACE
               valueFrom:

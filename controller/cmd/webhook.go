@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/gookit/slog"
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -53,7 +54,7 @@ func mutationRequired(ignoredList []string, metadata *metav1.ObjectMeta) bool {
 	// skip special kubernete system namespaces
 	for _, namespace := range ignoredList {
 		if metadata.Namespace == namespace {
-			infoLogger.Printf("Skip mutation for %v for it's in special namespace:%v", metadata.Name, metadata.Namespace)
+			slog.Printf("Skip mutation for %v for it's in special namespace:%v", metadata.Name, metadata.Namespace)
 			return false
 		}
 	}
@@ -78,7 +79,7 @@ func mutationRequired(ignoredList []string, metadata *metav1.ObjectMeta) bool {
 		}
 	}
 
-	infoLogger.Printf("Mutation policy for %v/%v: status: %q required:%v", metadata.Namespace, metadata.Name, status, required)
+	slog.Printf("Mutation policy for %v/%v: status: %q required:%v", metadata.Namespace, metadata.Name, status, required)
 	return required
 }
 
@@ -142,7 +143,7 @@ func (whsvr *WebhookServer) mutate(ar *admissionv1.AdmissionReview) *admissionv1
 	req := ar.Request
 	var pod corev1.Pod
 	if err := json.Unmarshal(req.Object.Raw, &pod); err != nil {
-		warningLogger.Printf("Could not unmarshal raw object: %v", err)
+		slog.Warnf("Could not unmarshal raw object: %v", err)
 		return &admissionv1.AdmissionResponse{
 			Result: &metav1.Status{
 				Message: err.Error(),
@@ -158,12 +159,12 @@ func (whsvr *WebhookServer) mutate(ar *admissionv1.AdmissionReview) *admissionv1
 
 	fmt.Println(string(admRequest))
 
-	infoLogger.Printf("AdmissionReview for Kind=%v, Namespace=%v Name=%v (%v) UID=%v patchOperation=%v UserInfo=%v",
+	slog.Printf("AdmissionReview for Kind=%v, Namespace=%v Name=%v (%v) UID=%v patchOperation=%v UserInfo=%v",
 		req.Kind, req.Namespace, req.Name, pod.Name, req.UID, req.Operation, req.UserInfo)
 
 	// determine whether to perform mutation
 	if !mutationRequired(ignoredNamespaces, &pod.ObjectMeta) {
-		infoLogger.Printf("Skipping mutation for %s/%s due to policy check", pod.Namespace, pod.Name)
+		slog.Printf("Skipping mutation for %s/%s due to policy check", pod.Namespace, pod.Name)
 		return &admissionv1.AdmissionResponse{
 			Allowed: true,
 		}
@@ -184,7 +185,7 @@ func (whsvr *WebhookServer) mutate(ar *admissionv1.AdmissionReview) *admissionv1
 	fmt.Println("--------------------------------------")
 	fmt.Println(string(patchBytes))
 
-	infoLogger.Printf("AdmissionResponse: patch=%v\n", string(patchBytes))
+	slog.Printf("AdmissionResponse: patch=%v\n", string(patchBytes))
 	return &admissionv1.AdmissionResponse{
 		Allowed: true,
 		Patch:   patchBytes,
@@ -204,7 +205,7 @@ func (whsvr *WebhookServer) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(body) == 0 {
-		warningLogger.Println("empty body")
+		slog.Warnf("empty body")
 		http.Error(w, "empty body", http.StatusBadRequest)
 		return
 	}
@@ -212,7 +213,7 @@ func (whsvr *WebhookServer) serve(w http.ResponseWriter, r *http.Request) {
 	// verify the content type is accurate
 	contentType := r.Header.Get("Content-Type")
 	if contentType != "application/json" {
-		warningLogger.Printf("Content-Type=%s, expect application/json", contentType)
+		slog.Warnf("Content-Type=%s, expect application/json", contentType)
 		http.Error(w, "invalid Content-Type, expect `application/json`", http.StatusUnsupportedMediaType)
 		return
 	}
@@ -225,7 +226,7 @@ func (whsvr *WebhookServer) serve(w http.ResponseWriter, r *http.Request) {
 	var admissionResponse *admissionv1.AdmissionResponse
 	ar := admissionv1.AdmissionReview{}
 	if _, _, err := deserializer.Decode(body, nil, &ar); err != nil {
-		warningLogger.Printf("Can't decode body: %v", err)
+		slog.Warnf("Can't decode body: %v", err)
 		admissionResponse = &admissionv1.AdmissionResponse{
 			Result: &metav1.Status{
 				Message: err.Error(),
@@ -257,12 +258,12 @@ func (whsvr *WebhookServer) serve(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := json.Marshal(admissionReview)
 	if err != nil {
-		warningLogger.Printf("Can't encode response: %v", err)
+		slog.Warnf("Can't encode response: %v", err)
 		http.Error(w, fmt.Sprintf("could not encode response: %v", err), http.StatusInternalServerError)
 	}
-	infoLogger.Printf("Ready to write reponse ...")
+	slog.Printf("Ready to write reponse ...")
 	if _, err := w.Write(resp); err != nil {
-		warningLogger.Printf("Can't write response: %v", err)
+		slog.Warnf("Can't write response: %v", err)
 		http.Error(w, fmt.Sprintf("could not write response: %v", err), http.StatusInternalServerError)
 	}
 }

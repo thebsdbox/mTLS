@@ -1,12 +1,12 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"reflect"
 
+	"github.com/gookit/slog"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -45,16 +45,11 @@ func client(kubeconfigPath string) (*kubernetes.Clientset, error) {
 	return clientSet, nil
 }
 
-func createOrUpdateMutatingWebhookConfiguration(caPEM *bytes.Buffer, webhookService, webhookNamespace, kubeconfig string) error {
-	infoLogger.Println("Initializing the kube client...")
-
-	clientset, err := client(kubeconfig)
-	if err != nil {
-		return err
-	}
+func createOrUpdateMutatingWebhookConfiguration(caPEM []byte, webhookService, webhookNamespace string, clientset *kubernetes.Clientset) error {
+	slog.Println("Initializing the kube client...")
 
 	mutatingWebhookConfigV1Client := clientset.AdmissionregistrationV1()
-	infoLogger.Printf("Creating or updating the mutatingwebhookconfiguration: %s", webhookConfigName)
+	slog.Printf("Creating or updating the mutatingwebhookconfiguration: %s", webhookConfigName)
 	fail := admissionregistrationv1.Fail
 	sideEffect := admissionregistrationv1.SideEffectClassNone
 
@@ -67,7 +62,7 @@ func createOrUpdateMutatingWebhookConfiguration(caPEM *bytes.Buffer, webhookServ
 			AdmissionReviewVersions: []string{"v1", "v1beta1"},
 			SideEffects:             &sideEffect,
 			ClientConfig: admissionregistrationv1.WebhookClientConfig{
-				CABundle: caPEM.Bytes(), // self-generated CA for the webhook
+				CABundle: caPEM, // self-generated CA for the webhook
 				Service: &admissionregistrationv1.ServiceReference{
 					Name:      webhookService,
 					Namespace: webhookNamespace,
@@ -106,12 +101,12 @@ func createOrUpdateMutatingWebhookConfiguration(caPEM *bytes.Buffer, webhookServ
 	foundWebhookConfig, err := mutatingWebhookConfigV1Client.MutatingWebhookConfigurations().Get(context.TODO(), webhookConfigName, metav1.GetOptions{})
 	if err != nil && apierrors.IsNotFound(err) {
 		if _, err := mutatingWebhookConfigV1Client.MutatingWebhookConfigurations().Create(context.TODO(), mutatingWebhookConfig, metav1.CreateOptions{}); err != nil {
-			warningLogger.Printf("Failed to create the mutatingwebhookconfiguration: %s", webhookConfigName)
+			slog.Warnf("Failed to create the mutatingwebhookconfiguration: %s", webhookConfigName)
 			return err
 		}
-		infoLogger.Printf("Created mutatingwebhookconfiguration: %s", webhookConfigName)
+		slog.Printf("Created mutatingwebhookconfiguration: %s", webhookConfigName)
 	} else if err != nil {
-		warningLogger.Printf("Failed to check the mutatingwebhookconfiguration: %s", webhookConfigName)
+		slog.Warnf("Failed to check the mutatingwebhookconfiguration: %s", webhookConfigName)
 		return err
 	} else {
 		// there is an existing mutatingWebhookConfiguration
@@ -126,15 +121,22 @@ func createOrUpdateMutatingWebhookConfiguration(caPEM *bytes.Buffer, webhookServ
 				reflect.DeepEqual(foundWebhookConfig.Webhooks[0].ClientConfig.Service, mutatingWebhookConfig.Webhooks[0].ClientConfig.Service)) {
 			mutatingWebhookConfig.ObjectMeta.ResourceVersion = foundWebhookConfig.ObjectMeta.ResourceVersion
 			if _, err := mutatingWebhookConfigV1Client.MutatingWebhookConfigurations().Update(context.TODO(), mutatingWebhookConfig, metav1.UpdateOptions{}); err != nil {
-				warningLogger.Printf("Failed to update the mutatingwebhookconfiguration: %s", webhookConfigName)
+				slog.Warnf("Failed to update the mutatingwebhookconfiguration: %s, %v", webhookConfigName)
 				return err
 			}
-			infoLogger.Printf("Updated the mutatingwebhookconfiguration: %s", webhookConfigName)
+			slog.Printf("Updated the mutatingwebhookconfiguration: %s", webhookConfigName)
 		}
-		infoLogger.Printf("The mutatingwebhookconfiguration: %s already exists and has no change", webhookConfigName)
+		slog.Warnf("The mutatingwebhookconfiguration: %s already exists and has no change", webhookConfigName)
 	}
 
 	// fmt.Println(mutatingWebhookConfig)
 
 	return nil
+}
+
+func tidyWebhook(webhookConfigName string, clientset *kubernetes.Clientset) error {
+	mutatingWebhookConfigV1Client := clientset.AdmissionregistrationV1()
+
+	return mutatingWebhookConfigV1Client.MutatingWebhookConfigurations().Delete(context.TODO(), webhookConfigName, *metav1.NewDeleteOptions(0))
+
 }

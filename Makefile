@@ -5,6 +5,7 @@ REPO=thebsdbox
 SMESHIMAGEFULLNAME=${REPO}/${SMESHIMAGENAME}:${VERSION}
 DEMOIMAGEFULLNAME=${REPO}/demo:${VERSION}
 WATCHERIMAGEFULLNAME=${REPO}/watcher:${VERSION}
+CONTROLLERIMAGEFULLNAME=${REPO}/smesh-controller:${VERSION}
 
 .PHONY: help build push all
 
@@ -45,6 +46,17 @@ build_watcher:
 
 push_watcher:
 	    @docker push ${WATCHERIMAGEFULLNAME}
+
+controller: build_controller push_controller
+
+build_controller: 
+		@docker build -t ${CONTROLLERIMAGEFULLNAME} ./controller
+
+push_controller:
+	    @docker push ${CONTROLLERIMAGEFULLNAME}
+
+controller_manifest:
+		@kubectl kustomize controller/deploy/ > ./manifests/controller.yaml
 
 kind:
 		@kubectl delete -f ./manifests/deployment_sidecar_secret.yaml; make build_proxy; kind load docker-image thebsdbox/smesh-proxy:v1; kubectl apply -f ./manifests/deployment_sidecar_secret.yaml
