@@ -63,7 +63,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	slog.Info("Starting the SMESH 🐝")
+	slog.Info("starting the SMESH 🐝")
 
 	// Lookup for environment variable
 	envAddress, exists := os.LookupEnv("KUBE_NODE_NAME")
@@ -169,7 +169,7 @@ func main() {
 		c.Socks = objs.MapSocks
 		internalListener := c.startInternalListener()
 		defer internalListener.Close()
-		go c.start(internalListener, true)
+		go c.startListeners(internalListener, true)
 
 	}
 
@@ -195,10 +195,10 @@ func main() {
 	if c.Certificates != nil {
 		externalTLSListener := c.startExternalTLSListener()
 		defer externalTLSListener.Close()
-		go c.startTLS(externalTLSListener)
+		go c.startTLSListener(externalTLSListener)
 	}
 
-	go c.start(externalListener, false)
+	go c.startListeners(externalListener, false)
 	_, exists = os.LookupEnv("DEBUG")
 	if exists {
 		go cat()

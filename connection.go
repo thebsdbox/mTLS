@@ -20,7 +20,7 @@ func (c *Config) startInternalListener() net.Listener {
 	if err != nil {
 		slog.Fatalf("Failed to start proxy server: %v", err)
 	}
-	slog.Infof("internal proxy [pid: %d] %s", os.Getpid(), proxyAddr)
+	slog.Infof("[pid: %d] %s", os.Getpid(), proxyAddr)
 	return listener
 }
 
@@ -30,7 +30,7 @@ func (c *Config) startExternalListener() net.Listener {
 	if err != nil {
 		slog.Fatalf("Failed to start proxy server: %v", err)
 	}
-	slog.Infof("external proxy [pid: %d] %s", os.Getpid(), proxyAddr)
+	slog.Infof("[pid: %d] %s", os.Getpid(), proxyAddr)
 	return listener
 }
 
@@ -59,12 +59,12 @@ func (c *Config) startExternalTLSListener() net.Listener {
 	if err != nil {
 		slog.Fatalf("Failed to start proxy server: %v", err)
 	}
-	slog.Infof("external TLS proxy [pid: %d] %s", os.Getpid(), proxyAddr)
+	slog.Infof("[pid: %d] %s", os.Getpid(), proxyAddr)
 	return listener
 }
 
 // Blocking function
-func (c *Config) start(listener net.Listener, internal bool) {
+func (c *Config) startListeners(listener net.Listener, internal bool) {
 	for {
 		conn, err := listener.Accept()
 		if (err != nil) && !errors.Is(err, net.ErrClosed) {
@@ -72,17 +72,17 @@ func (c *Config) start(listener net.Listener, internal bool) {
 			continue
 		}
 		if internal {
-			slog.Printf("internal proxy connection from %s -> %s", conn.RemoteAddr().String(), conn.LocalAddr().String())
+			slog.Printf("internal %s -> %s", conn.RemoteAddr().String(), conn.LocalAddr().String())
 			go c.internalProxy(conn)
 		} else {
-			slog.Printf("external proxy connection from %s -> %s", conn.RemoteAddr().String(), conn.LocalAddr().String())
+			slog.Printf("external %s -> %s", conn.RemoteAddr().String(), conn.LocalAddr().String())
 			go c.handleExternalConnection(conn)
 		}
 	}
 }
 
 // Blocking function
-func (c *Config) startTLS(listener net.Listener) {
+func (c *Config) startTLSListener(listener net.Listener) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -92,7 +92,7 @@ func (c *Config) startTLS(listener net.Listener) {
 			continue
 		}
 
-		slog.Printf("external TLS proxy connection from %s -> %s", conn.RemoteAddr().String(), conn.LocalAddr().String())
+		slog.Printf(" %s -> %s", conn.RemoteAddr().String(), conn.LocalAddr().String())
 		go c.handleTLSExternalConnection(conn)
 
 	}
@@ -153,7 +153,7 @@ func (c *Config) internalProxy(conn net.Conn) {
 	}
 	defer targetConn.Close()
 
-	slog.Printf("Connected to remote endpoint %s, original dest %s", endpoint, targetDestination)
+	slog.Printf("connect to proxy %s, original %s", endpoint, targetDestination)
 	//log.Printf("Internal proxy sending original destination: %s\n", targetDestination)
 	_, err = targetConn.Write([]byte(targetDestination))
 	if err != nil {
@@ -207,7 +207,7 @@ func (c *Config) handleExternalConnection(conn net.Conn) {
 	defer targetConn.Close()
 	conn.Write([]byte{'Y'}) // Send a response to kickstart the comms
 
-	slog.Printf("External connection from %s to %s", conn.RemoteAddr(), targetConn.RemoteAddr())
+	slog.Printf("%s -> %s", conn.RemoteAddr(), targetConn.RemoteAddr())
 
 	// The following code creates two data transfer channels:
 	// - From the client to the target server (handled by a separate goroutine).
@@ -228,21 +228,6 @@ func (c *Config) handleExternalConnection(conn net.Conn) {
 func (c *Config) handleTLSExternalConnection(conn net.Conn) {
 	defer conn.Close()
 	var tConn *tls.Conn = conn.(*tls.Conn)
-	// caCertPool := x509.NewCertPool()
-	// if !caCertPool.AppendCertsFromPEM(c.Certificates.ca) {
-	// 	log.Fatalf("could not append CA")
-	// }
-
-	// certificate, err := tls.X509KeyPair(c.Certificates.cert, c.Certificates.key)
-	// if err != nil {
-	// 	log.Fatalf("could not load certificate: %v", err)
-	// }
-
-	// config := &tls.Config{
-	// 	RootCAs:      caCertPool,
-	// 	Certificates: []tls.Certificate{certificate},
-	// 	ClientAuth:   tls.VerifyClientCertIfGiven,
-	// } //<-- this is the key
 
 	tmp := make([]byte, 256)
 	n, err := tConn.Read(tmp)
@@ -267,7 +252,7 @@ func (c *Config) handleTLSExternalConnection(conn net.Conn) {
 	defer targetConn.Close()
 	tConn.Write([]byte{'Y'}) // Send a response to kickstart the comms
 
-	slog.Printf("External TLS connection from %s to %s", conn.RemoteAddr(), targetConn.RemoteAddr())
+	slog.Printf("%s -> %s", conn.RemoteAddr(), targetConn.RemoteAddr())
 
 	// The following code creates two data transfer channels:
 	// - From the client to the target server (handled by a separate goroutine).
