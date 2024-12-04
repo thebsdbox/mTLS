@@ -101,7 +101,7 @@ The original port of `9000` is still being send cleartext traffic.
 	0x0040:  6f64 2d30 31                             od-01
 ```
 
-#### With the sidecar
+#### With the sidecar
 
 We can see that the destination port has been changed to the TLS port `18443`. 
 ```
@@ -113,6 +113,22 @@ We can see that the destination port has been changed to the TLS port `18443`.
 	0x0040:  263d d632 3795 b6b7 76c4 177d efee 9331  &=.27...v..}...1
 	0x0050:  2dcb 7c3e 5c16 7af6 9164 eb              -.|>\.z..d.
 ```
+
+## Version (zero dot zero dot) three (sidecars)
+
+We've combined the sidecar injector and the pod "watcher"!
+1. A pod is created
+2. The injector rewrites the pod manifest so that it has an `initContainer` containing the proxy
+3. Pod is now scheduled to be created
+4. The pod watcher will see the `update`, where the `pod.status.podIP` is updated with an address and it will create a certificate.
+5. The scheduled pod will be in a waiting/errored state as the `initContainer` will reference the certificate that hadn't been created yet.
+6. Pod should start and traffic will now be encrytped with the certificates.
+
+### Video
+
+
+https://github.com/user-attachments/assets/42bbfab4-8bad-4216-8f47-f4f12eb4fcf1
+
 
 ## Troubleshooting
 You can then inspect eBPF logs using `sudo cat /sys/kernel/debug/tracing/trace_pipe` to verify transparent proxy indeed intercepts the network traffic.
