@@ -4,7 +4,7 @@ FROM golang:1.23-alpine as dev
 RUN apk add --no-cache git ca-certificates upx
 RUN adduser -D appuser
 COPY . /src/
-WORKDIR /src
+WORKDIR /src/sidecar
 
 ENV GO111MODULE=on
 RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
@@ -13,6 +13,6 @@ RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
 RUN upx ./kube-gateway
 #FROM debian
 FROM scratch
-COPY --from=dev /src/kube-gateway /
+COPY --from=dev /src/sidecar/kube-gateway /
 #RUN apt-get update; apt-get install -y net-tools nftables
 CMD ["/kube-gateway"]

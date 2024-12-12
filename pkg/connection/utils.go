@@ -1,4 +1,4 @@
-package main
+package connection
 
 import (
 	"fmt"
@@ -10,7 +10,20 @@ import (
 	"github.com/gookit/slog"
 )
 
-type certs struct {
+const (
+	SO_ORIGINAL_DST = 80 // Socket option to get the original destination address
+)
+
+// SockAddrIn is a struct to hold the sockaddr_in structure for IPv4 "retrieved" by the SO_ORIGINAL_DST.
+type SockAddrIn struct {
+	SinFamily uint16
+	SinPort   [2]byte
+	SinAddr   [4]byte
+	// Pad to match the size of sockaddr_in
+	Pad [8]byte
+}
+
+type Certs struct {
 	ca   []byte
 	key  []byte
 	cert []byte
@@ -85,7 +98,7 @@ func (c *Config) findTargetFromConnection(conn net.Conn) (targetAddr string, tar
 	return
 }
 
-func getEnvCerts() (*certs, error) {
+func GetEnvCerts() (*Certs, error) {
 	envca, exists := os.LookupEnv("SMESH-CA")
 	if !exists {
 		return nil, fmt.Errorf("unable to find secrets from environment")
@@ -98,7 +111,7 @@ func getEnvCerts() (*certs, error) {
 	if !exists {
 		return nil, fmt.Errorf("unable to find secrets from environment")
 	}
-	return &certs{
+	return &Certs{
 		ca:   []byte(envca),
 		cert: []byte(envcert),
 		key:  []byte(envkey),
@@ -106,7 +119,7 @@ func getEnvCerts() (*certs, error) {
 
 }
 
-func getFSCerts() (*certs, error) {
+func GetFSCerts() (*Certs, error) {
 	f, err := os.ReadDir("/tmp")
 	if err != nil {
 		slog.Errorf("unable to parse /tmp [%v]", err)
@@ -127,7 +140,7 @@ func getFSCerts() (*certs, error) {
 	if err != nil {
 		return nil, fmt.Errorf("unable to read secrets from filesystem [%v]", err)
 	}
-	return &certs{
+	return &Certs{
 		ca:   []byte(envca),
 		cert: []byte(envcert),
 		key:  []byte(envkey),

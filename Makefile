@@ -22,14 +22,17 @@ help:
 
 .DEFAULT_GOAL := all
 
-proxy: build_proxy push_proxy
+sidecar: build_proxy push_proxy
 
-build_proxy:
-	    @go generate
-		@docker build -t ${SMESHIMAGEFULLNAME} .
+build_sidecar:
+	    @go generate ./pkg/manager
+		@docker build -t ${SMESHIMAGEFULLNAME} -f ./Dockerfile-sidecar . 
 
-push_proxy:
+push_sidecar:
 	    @docker push ${SMESHIMAGEFULLNAME}
+
+kind_sidecar:
+		@kind load docker-image thebsdbox/smesh-proxy:v1
 
 demo: build_demo push_demo
 
@@ -38,6 +41,9 @@ build_demo:
 
 push_demo:
 	    @docker push ${DEMOIMAGEFULLNAME}
+
+kind_demo:
+		@kind load docker-image thebsdbox/demo:v1
 
 watcher: build_watcher push_watcher
 
@@ -54,6 +60,9 @@ build_controller:
 
 push_controller:
 	    @docker push ${CONTROLLERIMAGEFULLNAME}
+
+kind_controller: 
+		@kind load docker-image thebsdbox/smesh-controller:v1
 
 controller_manifest:
 		@kubectl kustomize controller/deploy/ > ./manifests/controller.yaml

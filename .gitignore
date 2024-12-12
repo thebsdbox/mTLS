@@ -8,3 +8,5 @@ mirrors_bpfeb.go
 mirrors_bpfeb.o
 mirrors_bpfel.go
 mirrors_bpfel.o
+sidecar/sidecar
+dtunnel/dtunnel

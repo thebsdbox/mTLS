@@ -35,7 +35,7 @@ int cg_connect4(struct bpf_sock_addr *ctx) {
   int mask = (-1) << (32 - conf->mask);
   // bpf_printk("hex 0x%x 0x%x 0x%x", bpf_htonl(ctx->user_ip4), mask,
   //            conf->network);
-  bpf_printk("IP in bounds %pI4", &destination);
+  //bpf_printk("IP in bounds %pI4", &destination);
 
   // If this packet is not part of the podCIDR range then return
   if ((bpf_htonl(ctx->user_ip4) & mask) != conf->network) {
@@ -69,13 +69,13 @@ int cg_connect4(struct bpf_sock_addr *ctx) {
 
   // Wrap this message as it has two many arguments for older kernels (invalid
   // func unknown#177)
-  if (LINUX_KERNEL_VERSION > KERNEL_VERSION(6, 8, 0)) {
-    bpf_printk("[%d vs %d] incoming %pI4:%d", conf->proxy_pid, ns_pid,
-               &destination, dst_port);
-  } else {
+  //if (LINUX_KERNEL_VERSION > KERNEL_VERSION(6, 8, 0)) {
+   // bpf_printk("[%d vs %d] incoming %pI4:%d", conf->proxy_pid, ns_pid,
+   //            &destination, dst_port);
+  //} else {
     bpf_printk("[%d vs %d] incoming %pI4", conf->proxy_pid, ns_pid,
                &destination);
-  }
+  //}
 
   if (ns_pid == conf->proxy_pid)
     return 1;
@@ -106,14 +106,14 @@ int cg_connect4(struct bpf_sock_addr *ctx) {
   ctx->user_port = bpf_htonl(conf->proxy_port << 16); // Proxy port
 
   __u32 source = ctx->user_ip4;
-  if (LINUX_KERNEL_VERSION > KERNEL_VERSION(6, 8, 0)) {
+  // if (LINUX_KERNEL_VERSION > KERNEL_VERSION(6, 8, 0)) {
 
-    bpf_printk("New Connect() [%d] %pI4:%d to %pI4:%d", cookie, &destination,
-               dst_port, &source, bpf_ntohs(ctx->user_port));
-  } else {
+  //   bpf_printk("New Connect() [%d] %pI4:%d to %pI4:%d", cookie, &destination,
+  //              dst_port, &source, bpf_ntohs(ctx->user_port));
+  // } else {
     bpf_printk("New Connect() %pI4 to %pI4:%d", &destination, &source,
                bpf_ntohs(ctx->user_port));
-  }
+  //}
   return 1;
 }
 

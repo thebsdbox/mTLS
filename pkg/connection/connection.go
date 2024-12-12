@@ -1,4 +1,4 @@
-package main
+package connection
 
 import (
 	"crypto/tls"
@@ -11,10 +11,28 @@ import (
 	"os"
 	"time"
 
+	"github.com/cilium/ebpf"
 	"github.com/gookit/slog"
 )
 
-func (c *Config) startInternalListener() net.Listener {
+type Config struct {
+	ProxyPort      int
+	ClusterPort    int
+	ClusterTLSPort int
+	Address        string
+	ClusterAddress string // For Debug purposes
+	CgroupOverride string // For Debug purposes
+
+	PodCIDR      string
+	Certificates *Certs
+
+	Socks *ebpf.Map
+
+	Proxy     bool
+	ProxyFunc func(string) string
+}
+
+func (c *Config) StartInternalListener() net.Listener {
 	proxyAddr := fmt.Sprintf("%s:%d", c.Address, c.ProxyPort)
 	listener, err := net.Listen("tcp", proxyAddr)
 	if err != nil {
@@ -24,7 +42,7 @@ func (c *Config) startInternalListener() net.Listener {
 	return listener
 }
 
-func (c *Config) startExternalListener() net.Listener {
+func (c *Config) StartExternalListener() net.Listener {
 	proxyAddr := fmt.Sprintf("0.0.0.0:%d", c.ClusterPort)
 	listener, err := net.Listen("tcp", proxyAddr)
 	if err != nil {
@@ -34,7 +52,7 @@ func (c *Config) startExternalListener() net.Listener {
 	return listener
 }
 
-func (c *Config) startExternalTLSListener() net.Listener {
+func (c *Config) StartExternalTLSListener() net.Listener {
 	proxyAddr := fmt.Sprintf("0.0.0.0:%d", c.ClusterTLSPort)
 
 	caCertPool := x509.NewCertPool()
@@ -64,25 +82,28 @@ func (c *Config) startExternalTLSListener() net.Listener {
 }
 
 // Blocking function
-func (c *Config) startListeners(listener net.Listener, internal bool) {
+func (c *Config) StartListeners(listener net.Listener, internal bool) {
 	for {
 		conn, err := listener.Accept()
-		if (err != nil) && !errors.Is(err, net.ErrClosed) {
+		if err != nil && !errors.Is(err, net.ErrClosed) {
 			slog.Printf("Failed to accept connection: %v", err)
 			continue
-		}
-		if internal {
-			slog.Printf("internal %s -> %s", conn.RemoteAddr().String(), conn.LocalAddr().String())
-			go c.internalProxy(conn)
 		} else {
-			slog.Printf("external %s -> %s", conn.RemoteAddr().String(), conn.LocalAddr().String())
-			go c.handleExternalConnection(conn)
+			if conn != nil {
+				if internal {
+					slog.Printf("internal %s -> %s", conn.RemoteAddr().String(), conn.LocalAddr().String())
+					go c.internalProxy(conn)
+				} else {
+					slog.Printf("external %s -> %s", conn.RemoteAddr().String(), conn.LocalAddr().String())
+					go c.handleExternalConnection(conn)
+				}
+			}
 		}
 	}
 }
 
 // Blocking function
-func (c *Config) startTLSListener(listener net.Listener) {
+func (c *Config) StartTLSListener(listener net.Listener) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -130,6 +151,9 @@ func (c *Config) internalProxy(conn net.Conn) {
 		endpoint = fmt.Sprintf("%s:%d", destAddr, c.ClusterTLSPort)
 		if c.ClusterAddress != "" {
 			endpoint = fmt.Sprintf("%s:%d", c.ClusterAddress, c.ClusterPort)
+		}
+		if c.Proxy {
+			endpoint = c.ProxyFunc(destAddr)
 		}
 
 		// Set a timeout, mainly because connections can occur to pods that aren't ready
